@@ -1,0 +1,53 @@
+name: Update Formula
+
+on:
+  repository_dispatch:
+    types: [ferrite-release]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Ferrite version (e.g. 0.1.0)'
+        required: true
+      sha256:
+        description: 'SHA256 of the release tarball'
+        required: true
+
+jobs:
+  update:
+    name: Update Homebrew Formula
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set version and SHA
+        id: release
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            echo "version=${{ github.event.client_payload.version }}" >> "$GITHUB_OUTPUT"
+            echo "sha256=${{ github.event.client_payload.sha256 }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "sha256=${{ inputs.sha256 }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update formula
+        run: |
+          VERSION="${{ steps.release.outputs.version }}"
+          SHA256="${{ steps.release.outputs.sha256 }}"
+          sed -i "s|url \".*\"|url \"https://github.com/ferritelabs/ferrite/archive/refs/tags/v${VERSION}.tar.gz\"|" ferrite.rb
+          sed -i "s|sha256 \".*\"|sha256 \"${SHA256}\"|" ferrite.rb
+          sed -i "s|version \".*\"|version \"${VERSION}\"|" ferrite.rb
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "chore: bump ferrite to v${{ steps.release.outputs.version }}"
+          title: "chore: bump ferrite to v${{ steps.release.outputs.version }}"
+          body: |
+            Automated formula update for Ferrite v${{ steps.release.outputs.version }}.
+            SHA256: `${{ steps.release.outputs.sha256 }}`
+          branch: update-ferrite-${{ steps.release.outputs.version }}
+          base: main

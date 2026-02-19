@@ -1,0 +1,89 @@
+name: Build Bottles
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Ferrite version (e.g., 0.1.0)'
+        required: true
+        type: string
+  repository_dispatch:
+    types: [new-release]
+
+jobs:
+  bottle:
+    strategy:
+      matrix:
+        include:
+          - os: macos-14
+            arch: arm64_sonoma
+          - os: macos-13
+            arch: sonoma
+          - os: ubuntu-latest
+            arch: x86_64_linux
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@master
+
+      - name: Checkout tap
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build bottle
+        run: |
+          brew install --build-bottle ./ferrite.rb
+          brew bottle --json --root-url="https://github.com/ferritelabs/homebrew-tap/releases/download/v${{ inputs.version || github.event.client_payload.version }}" ./ferrite.rb
+
+      - name: Upload bottle
+        uses: actions/upload-artifact@v4
+        with:
+          name: bottle-${{ matrix.arch }}
+          path: |
+            ferrite--*.bottle.tar.gz
+            ferrite--*.bottle.json
+
+  collect:
+    needs: bottle
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout tap
+        uses: actions/checkout@v4
+
+      - name: Download all bottles
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Merge bottle JSON and update formula
+        run: |
+          # Merge all bottle JSON files
+          python3 -c "
+          import json, glob
+          bottles = {}
+          for f in glob.glob('ferrite--*.bottle.json'):
+              with open(f) as fh:
+                  data = json.load(fh)
+                  for formula, info in data.items():
+                      if formula not in bottles:
+                          bottles[formula] = info
+                      else:
+                          bottles[formula]['bottle']['tags'].update(info['bottle']['tags'])
+          print(json.dumps(bottles, indent=2))
+          " > merged-bottles.json
+          echo "Merged bottle JSON:"
+          cat merged-bottles.json
+
+      - name: Create release with bottles
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version || github.event.client_payload.version }}
+          files: ferrite--*.bottle.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
