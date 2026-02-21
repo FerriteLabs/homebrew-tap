@@ -9,7 +9,7 @@ class Ferrite < Formula
   # tag is pushed to ferritelabs/ferrite. To compute manually:
   #   curl -sL <url> | shasum -a 256
   # The placeholder below is replaced by CI on first release.
-  sha256 "PLACEHOLDER_UPDATED_BY_RELEASE_WORKFLOW"
+  sha256 "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   license "Apache-2.0"
   head "https://github.com/ferritelabs/ferrite.git", branch: "main"
 
