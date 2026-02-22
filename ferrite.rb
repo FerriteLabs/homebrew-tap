@@ -4,7 +4,7 @@
 class Ferrite < Formula
   desc "High-performance, tiered-storage key-value store - drop-in Redis replacement"
   homepage "https://github.com/ferritelabs/ferrite"
-  url "https://github.com/ferritelabs/ferrite/archive/refs/tags/v0.1.0.tar.gz"
+  url "https://github.com/ferritelabs/ferrite/archive/refs/tags/v0.2.0.tar.gz"
   # SHA256 is automatically updated by the update-formula workflow when a new
   # tag is pushed to ferritelabs/ferrite. To compute manually:
   #   curl -sL <url> | shasum -a 256
