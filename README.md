@@ -128,3 +128,22 @@ Check logs:
 cat /usr/local/var/log/ferrite/ferrite.log
 cat /usr/local/var/log/ferrite/ferrite.error.log
 ```
+
+### Port already in use
+
+If port 6379 is already occupied (e.g., by Redis):
+```bash
+# Check what is using the port
+lsof -i :6379
+
+# Start Ferrite on an alternate port
+ferrite --port 6380
+```
+
+### Apple Silicon (M1/M2/M3) issues
+
+Ensure you are using a native ARM build:
+```bash
+brew reinstall ferrite
+file $(which ferrite)   # Should show "arm64"
+```
