@@ -108,5 +108,9 @@ class Ferrite < Formula
     shell_output("#{bin}/ferrite-cli -p #{port} SET test_key test_value")
     output = shell_output("#{bin}/ferrite-cli -p #{port} GET test_key")
     assert_match "test_value", output
+
+    # Test database size
+    output = shell_output("#{bin}/ferrite-cli -p #{port} DBSIZE")
+    assert_match "1", output
   end
 end
