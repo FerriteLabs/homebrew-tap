@@ -8,6 +8,7 @@ class Ferrite < Formula
   # SHA256 is automatically updated by the update-formula workflow when a new
   # tag is pushed to ferritelabs/ferrite. To compute manually:
   #   curl -sL <url> | shasum -a 256
+  # Verify checksum after download: brew fetch --verify-sha ferrite
   # The placeholder below is replaced by CI on first release.
   sha256 "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   license "Apache-2.0"
