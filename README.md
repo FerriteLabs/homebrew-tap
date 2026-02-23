@@ -1,5 +1,8 @@
 # Homebrew Tap for Ferrite
 
+[![CI](https://github.com/ferritelabs/homebrew-tap/actions/workflows/ci.yml/badge.svg)](https://github.com/ferritelabs/homebrew-tap/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+
 This directory contains the Homebrew formula for installing Ferrite on macOS and Linux.
 
 ## Installation
