@@ -55,6 +55,14 @@ ferrite-cli
 brew services start ferrite
 ```
 
+## First-time Setup
+
+If this is your first time installing Ferrite, note the following caveats:
+
+1. **Default port**: Ferrite listens on port 6379 by default, the same as Redis. If you have Redis running, stop it first or configure Ferrite to use a different port.
+2. **Data directory**: Ferrite stores its data in `$(brew --prefix)/var/lib/ferrite/`. Ensure this directory has adequate disk space for your workload.
+3. **Configuration**: A default configuration file is placed at `$(brew --prefix)/etc/ferrite/ferrite.toml`. Review and customize it before running in production.
+
 ## Service Management
 
 ```bash
