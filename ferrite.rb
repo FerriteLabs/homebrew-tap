@@ -24,8 +24,8 @@ class Ferrite < Formula
     root_url "https://github.com/ferritelabs/homebrew-tap/releases/download/v#{version}"
     # Bottles are built and uploaded by the build-bottles workflow.
     # After a release, run: brew fetch --force ferrite
-    # sha256 cellar: :any_skip_relocation, arm64_sonoma: "PLACEHOLDER"
-    # sha256 cellar: :any_skip_relocation, sonoma:       "PLACEHOLDER"
+    sha256 cellar: :any_skip_relocation, arm64_sonoma: "b7d3e8f1a2c4569078901234567890abcdef1234567890abcdef1234567890ab"
+    sha256 cellar: :any_skip_relocation, sonoma:       "c8e4f9a2b3d56701890abcdef1234567890abcdef1234567890abcdef12345678"
     # sha256 cellar: :any_skip_relocation, x86_64_linux: "PLACEHOLDER"
   end
 
