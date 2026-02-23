@@ -25,7 +25,7 @@ jobs:
 
     steps:
       - name: Set up Homebrew
-        uses: Homebrew/actions/setup-homebrew@master
+        uses: Homebrew/actions/setup-homebrew@v1
 
       - name: Checkout tap
         uses: actions/checkout@v4
