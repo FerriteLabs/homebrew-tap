@@ -39,7 +39,7 @@ jobs:
           brew bottle --json --root-url="https://github.com/ferritelabs/homebrew-tap/releases/download/v${{ inputs.version || github.event.client_payload.version }}" ./ferrite.rb
 
       - name: Upload bottle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: bottle-${{ matrix.arch }}
           path: |
