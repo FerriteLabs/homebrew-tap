@@ -36,10 +36,11 @@ class Ferrite < Formula
   depends_on "openssl@3"
 
   def install
-    system "cargo", "install", *std_cargo_args
+    # Build with TLS and CLI features enabled
+    system "cargo", "install", *std_cargo_args, "--features", "tls,cli"
 
     # Install CLI tools
-    system "cargo", "install", *std_cargo_args(path: "."), "--bin", "ferrite-cli"
+    system "cargo", "install", *std_cargo_args(path: "."), "--features", "tls,cli", "--bin", "ferrite-cli"
 
     # Install man pages if they exist
     man1.install Dir["docs/man/*.1"] if Dir.exist?("docs/man")
