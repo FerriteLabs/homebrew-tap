@@ -32,9 +32,8 @@ class Ferrite < Formula
   depends_on "rust" => :build
   depends_on "pkg-config" => :build
   depends_on "cmake" => :build
-  on_linux do
-    depends_on "openssl@3"
-  end
+  # Runtime dependency for TLS support (required on all platforms)
+  depends_on "openssl@3"
 
   def install
     system "cargo", "install", *std_cargo_args
