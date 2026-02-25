@@ -32,8 +32,10 @@ class Ferrite < Formula
   depends_on "rust" => :build
   depends_on "pkg-config" => :build
   depends_on "cmake" => :build
-  # Runtime dependency for TLS support (required on all platforms)
-  depends_on "openssl@3"
+  # Runtime dependency for TLS support
+  # On macOS, prefer the Homebrew-installed OpenSSL over system LibreSSL
+  depends_on "openssl@3" if OS.mac?
+  depends_on "openssl@3" => :recommended if OS.linux?
 
   def install
     # Build with TLS and CLI features enabled
