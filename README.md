@@ -158,3 +158,11 @@ Ensure you are using a native ARM build:
 brew reinstall ferrite
 file $(which ferrite)   # Should show "arm64"
 ```
+
+## Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## License
+
+Apache-2.0
