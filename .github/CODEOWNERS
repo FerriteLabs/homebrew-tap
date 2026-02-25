@@ -1,1 +1,8 @@
+# Default owners for everything
 * @josedab
+
+# Formula
+/ferrite.rb @josedab
+
+# CI/CD and infrastructure
+/.github/ @josedab
