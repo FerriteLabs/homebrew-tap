@@ -86,6 +86,9 @@ class Ferrite < Formula
       To start ferrite as a background service:
         brew services start ferrite
 
+      To enable TLS for production deployments:
+        ferrite --tls-cert-file /path/to/cert.pem --tls-key-file /path/to/key.pem
+
       For more information:
         https://github.com/ferritelabs/ferrite
     EOS
