@@ -17,8 +17,12 @@ jobs:
         include:
           - os: macos-14
             arch: arm64_sonoma
+          - os: macos-14
+            arch: arm64_ventura
           - os: macos-13
             arch: sonoma
+          - os: macos-13
+            arch: ventura
           - os: ubuntu-latest
             arch: x86_64_linux
     runs-on: ${{ matrix.os }}
