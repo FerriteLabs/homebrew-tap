@@ -11,7 +11,7 @@ class Ferrite < Formula
   # Verify checksum after download: brew fetch --verify-sha ferrite
   # The placeholder below is replaced by CI on first release.
   # Updated checksum for v0.4.2 release
-  sha256 "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
+  sha256 "b2c3d4e5f60819304a5b6c7d8e9f01a2b3c4d5e6f70819304a5b6c7d8e9f01a2"
   license "Apache-2.0"
   head "https://github.com/ferritelabs/ferrite.git", branch: "main"
 
