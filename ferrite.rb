@@ -40,6 +40,7 @@ class Ferrite < Formula
   # On macOS, prefer the Homebrew-installed OpenSSL over system LibreSSL
   depends_on "openssl@3" if OS.mac?
   depends_on "openssl@3" => :recommended if OS.linux?
+  uses_from_macos "curl"
 
   def install
     # Build with TLS and CLI features enabled
