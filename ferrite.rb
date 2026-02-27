@@ -42,6 +42,7 @@ class Ferrite < Formula
   depends_on "openssl@3" => :recommended if OS.linux?
   uses_from_macos "curl"
 
+  # Minimum Rust version: 1.88 (required for async trait and io_uring support)
   def install
     # Build with TLS and CLI features enabled
     system "cargo", "install", *std_cargo_args, "--features", "tls,cli"
