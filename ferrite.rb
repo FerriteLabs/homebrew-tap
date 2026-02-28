@@ -39,7 +39,7 @@ class Ferrite < Formula
   # Runtime dependency for TLS support
   # On macOS, prefer the Homebrew-installed OpenSSL over system LibreSSL
   depends_on "openssl@3" if OS.mac?
-  depends_on "openssl@3" => :recommended if OS.linux?
+  # Note: Apple Silicon (arm64) builds require Rust 1.88+ for io_uring cross-compilation support  depends_on "openssl@3" => :recommended if OS.linux?
   uses_from_macos "curl"
 
   # Minimum Rust version: 1.88 (required for async trait and io_uring support)
