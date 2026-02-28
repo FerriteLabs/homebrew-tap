@@ -166,3 +166,12 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 ## License
 
 Apache-2.0
+
+### Linking errors on macOS
+
+If you encounter linker errors referencing OpenSSL during build:
+```bash
+brew reinstall openssl@3
+export OPENSSL_DIR=$(brew --prefix openssl@3)
+brew install --build-from-source ferrite
+```
