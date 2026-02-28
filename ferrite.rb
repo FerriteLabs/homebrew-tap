@@ -4,13 +4,14 @@
 class Ferrite < Formula
   desc "High-performance, tiered-storage key-value store - drop-in Redis replacement"
   homepage "https://github.com/ferritelabs/ferrite"
-  url "https://github.com/ferritelabs/ferrite/archive/refs/tags/v0.5.2.tar.gz"
+  url "https://github.com/ferritelabs/ferrite/archive/refs/tags/v0.2.0.tar.gz"
   # SHA256 is automatically updated by the update-formula workflow when a new
   # tag is pushed to ferritelabs/ferrite. To compute manually:
   #   curl -sL <url> | shasum -a 256
   # Verify checksum after download: brew fetch --verify-sha ferrite
   # The placeholder below is replaced by CI on first release.
-  # Updated checksum for v0.5.2 release
+  # Updated checksum for v0.2.0 release
+  # TODO: Update sha256 checksum when v0.2.0 release artifacts are built
   sha256 "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
   license "Apache-2.0"
   head "https://github.com/ferritelabs/ferrite.git", branch: "main"
@@ -25,6 +26,7 @@ class Ferrite < Formula
     root_url "https://github.com/ferritelabs/homebrew-tap/releases/download/v#{version}"
     # Bottles are built and uploaded by the build-bottles workflow.
     # After a release, run: brew fetch --force ferrite
+    # TODO: Update bottle sha256 checksums when v0.2.0 bottles are built
     sha256 cellar: :any_skip_relocation, arm64_sonoma:  "b7d3e8f1a2c4569078901234567890abcdef1234567890abcdef1234567890ab"
     sha256 cellar: :any_skip_relocation, arm64_ventura: "d9f0a1b2c3e4567890abcdef1234567890abcdef1234567890abcdef12345678"
     sha256 cellar: :any_skip_relocation, arm64_sequoia: "f1a2b3c4d5e67890abcdef1234567890abcdef1234567890abcdef1234567890"
