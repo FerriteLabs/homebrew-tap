@@ -94,8 +94,10 @@ To create your own tap:
 2. Add the formula: `Formula/ferrite.rb`
 3. Update the SHA256 hash for the release tarball:
    ```bash
-   curl -sL https://github.com/ferritelabs/ferrite/archive/refs/tags/v0.1.0.tar.gz | shasum -a 256
+   curl -sL https://github.com/ferritelabs/ferrite/archive/refs/tags/v0.2.0.tar.gz | shasum -a 256
    ```
+
+> **Note:** In the official FerriteLabs tap, SHA256 checksums and bottle hashes are automatically updated by CI workflows when a new release is tagged. The placeholder values in `ferrite.rb` are replaced by the `update-formula` and `build-bottles` workflows. If installing from source before bottles are built, use `brew install --build-from-source ferrite`.
 
 ## Updating the Formula
 
@@ -158,6 +160,18 @@ Ensure you are using a native ARM build:
 brew reinstall ferrite
 file $(which ferrite)   # Should show "arm64"
 ```
+
+## 🌐 FerriteLabs Ecosystem
+
+| Repository | Description |
+|-----------|-------------|
+| [ferrite](https://github.com/ferritelabs/ferrite) | Core database engine (Rust, 12 crates) |
+| [ferrite-docs](https://github.com/ferritelabs/ferrite-docs) | Documentation website |
+| [ferrite-ops](https://github.com/ferritelabs/ferrite-ops) | Docker, Helm, Grafana, packaging |
+| [ferrite-bench](https://github.com/ferritelabs/ferrite-bench) | Performance benchmarks |
+| [vscode-ferrite](https://github.com/ferritelabs/vscode-ferrite) | VS Code extension |
+| [jetbrains-ferrite](https://github.com/ferritelabs/jetbrains-ferrite) | JetBrains IDE plugin |
+| **homebrew-tap** | 📍 You are here |
 
 ## Contributing
 
