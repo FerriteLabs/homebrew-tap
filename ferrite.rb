@@ -9,9 +9,10 @@ class Ferrite < Formula
   # tag is pushed to ferritelabs/ferrite. To compute manually:
   #   curl -sL <url> | shasum -a 256
   # Verify checksum after download: brew fetch --verify-sha ferrite
-  # The placeholder below is replaced by CI on first release.
-  # Updated checksum for v0.2.0 release
-  # TODO: Update sha256 checksum when v0.2.0 release artifacts are built
+  #
+  # To update: run the update-formula workflow with the new version and SHA256,
+  # or trigger a repository_dispatch event from the ferrite release workflow.
+  # Placeholder below is replaced by CI on release.
   sha256 "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
   license "Apache-2.0"
   head "https://github.com/ferritelabs/ferrite.git", branch: "main"
@@ -19,20 +20,21 @@ class Ferrite < Formula
   livecheck do
     url :stable
     strategy :github_latest
-    regex(/v?(d+(?:.d+)+)/i)
+    regex(/v?(\d+(?:\.\d+)+)/i)
   end
 
   bottle do
     root_url "https://github.com/ferritelabs/homebrew-tap/releases/download/v#{version}"
     # Bottles are built and uploaded by the build-bottles workflow.
     # After a release, run: brew fetch --force ferrite
-    # TODO: Update bottle sha256 checksums when v0.2.0 bottles are built
+    # Bottle checksums are updated by the build-bottles CI workflow.
+    # Placeholder values below are replaced when bottles are built for each platform.
     sha256 cellar: :any_skip_relocation, arm64_sonoma:  "b7d3e8f1a2c4569078901234567890abcdef1234567890abcdef1234567890ab"
     sha256 cellar: :any_skip_relocation, arm64_ventura: "d9f0a1b2c3e4567890abcdef1234567890abcdef1234567890abcdef12345678"
     sha256 cellar: :any_skip_relocation, arm64_sequoia: "f1a2b3c4d5e67890abcdef1234567890abcdef1234567890abcdef1234567890"
     sha256 cellar: :any_skip_relocation, sonoma:        "c8e4f9a2b3d56701890abcdef1234567890abcdef1234567890abcdef12345678"
     sha256 cellar: :any_skip_relocation, ventura:       "e0a1b2c3d4f5678901abcdef2345678901abcdef2345678901abcdef23456789"
-    # sha256 cellar: :any_skip_relocation, x86_64_linux: "PLACEHOLDER"
+    sha256 cellar: :any_skip_relocation, x86_64_linux:  "0000000000000000000000000000000000000000000000000000000000000000"
   end
 
   depends_on "rust" => :build
@@ -41,7 +43,7 @@ class Ferrite < Formula
   # Runtime dependency for TLS support
   # On macOS, prefer the Homebrew-installed OpenSSL over system LibreSSL
   depends_on "openssl@3" if OS.mac?
-  # Note: Apple Silicon (arm64) builds require Rust 1.88+ for io_uring cross-compilation support  depends_on "openssl@3" => :recommended if OS.linux?
+  depends_on "openssl@3" if OS.linux?
   uses_from_macos "curl"
 
   # Minimum Rust version: 1.88 (required for async trait and io_uring support)
@@ -95,7 +97,7 @@ class Ferrite < Formula
         ferrite --tls-cert-file /path/to/cert.pem --tls-key-file /path/to/key.pem
 
       For more information:
-        https://github.com/ferritelabs/ferrite
+        https://ferrite.rs
     EOS
   end
 
