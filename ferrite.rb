@@ -35,7 +35,7 @@ class Ferrite < Formula
     sha256 cellar: :any_skip_relocation, arm64_sequoia: "f1a2b3c4d5e67890abcdef1234567890abcdef1234567890abcdef1234567890"
     sha256 cellar: :any_skip_relocation, sonoma:        "c8e4f9a2b3d56701890abcdef1234567890abcdef1234567890abcdef12345678"
     sha256 cellar: :any_skip_relocation, ventura:       "e0a1b2c3d4f5678901abcdef2345678901abcdef2345678901abcdef23456789"
-    sha256 cellar: :any_skip_relocation, x86_64_linux:  "0000000000000000000000000000000000000000000000000000000000000000"
+    sha256 cellar: :any_skip_relocation, x86_64_linux:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   end
 
   depends_on "rust" => :build
