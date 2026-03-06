@@ -15,7 +15,8 @@ class Ferrite < Formula
   # Placeholder below is replaced by CI on release.
   sha256 "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
   license "Apache-2.0"
-  head "https://github.com/ferritelabs/ferrite.git", branch: "main"
+
+  depends_on "openssl@3"  head "https://github.com/ferritelabs/ferrite.git", branch: "main"
 
   livecheck do
     url :stable
