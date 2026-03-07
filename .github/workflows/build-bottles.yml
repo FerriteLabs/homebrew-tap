@@ -84,6 +84,57 @@ jobs:
           echo "Merged bottle JSON:"
           cat merged-bottles.json
 
+      - name: Update formula with bottle checksums
+        run: |
+          python3 << 'PYEOF'
+          import json, re
+
+          with open("merged-bottles.json") as f:
+              data = json.load(f)
+
+          # Extract bottle tags (platform -> sha256)
+          checksums = {}
+          for formula, info in data.items():
+              for tag, tag_info in info.get("bottle", {}).get("tags", {}).items():
+                  checksums[tag] = tag_info.get("sha256", "")
+
+          # Map platform names to formula identifiers
+          platform_map = {
+              "arm64_sonoma": "arm64_sonoma",
+              "arm64_ventura": "arm64_ventura",
+              "arm64_sequoia": "arm64_sequoia",
+              "sonoma": "sonoma",
+              "ventura": "ventura",
+              "x86_64_linux": "x86_64_linux",
+          }
+
+          with open("ferrite.rb") as f:
+              formula = f.read()
+
+          for platform, identifier in platform_map.items():
+              if platform in checksums and checksums[platform]:
+                  pattern = rf'(sha256 cellar: :any_skip_relocation, {re.escape(identifier)}:\s+)"[a-f0-9]+"'
+                  replacement = rf'\1"{checksums[platform]}"'
+                  formula = re.sub(pattern, replacement, formula)
+
+          with open("ferrite.rb", "w") as f:
+              f.write(formula)
+
+          print(f"Updated {len(checksums)} bottle checksums in ferrite.rb")
+          PYEOF
+
+      - name: Commit formula update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ferrite.rb
+          if git diff --cached --quiet; then
+            echo "No bottle checksum changes to commit"
+          else
+            git commit -m "chore: update bottle checksums for v${{ inputs.version || github.event.client_payload.version }}"
+            git push
+          fi
+
       - name: Create release with bottles
         uses: softprops/action-gh-release@v2
         with:
