@@ -1,4 +1,4 @@
-# Homebrew Tap for Ferrite
+# Homebrew Tap Tap for Ferrite
 
 [![CI](https://github.com/ferritelabs/homebrew-tap/actions/workflows/ci.yml/badge.svg)](https://github.com/ferritelabs/homebrew-tap/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
