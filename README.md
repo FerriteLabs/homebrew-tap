@@ -192,3 +192,4 @@ export OPENSSL_DIR=$(brew --prefix openssl@3)
 brew install --build-from-source ferrite
 ```
 
+
