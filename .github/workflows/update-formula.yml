@@ -37,9 +37,23 @@ jobs:
         run: |
           VERSION="${{ steps.release.outputs.version }}"
           SHA256="${{ steps.release.outputs.sha256 }}"
+          
+          # Update URL
           sed -i "s|url \".*\"|url \"https://github.com/ferritelabs/ferrite/archive/refs/tags/v${VERSION}.tar.gz\"|" ferrite.rb
-          sed -i "s|sha256 \".*\"|sha256 \"${SHA256}\"|" ferrite.rb
-          sed -i "s|version \".*\"|version \"${VERSION}\"|" ferrite.rb
+          
+          # Update only the source tarball SHA256 (first occurrence, not bottle checksums)
+          # The source sha256 is the one NOT inside the bottle block (no cellar: prefix)
+          awk -v sha="$SHA256" '
+            /sha256 "/ && !done && !/cellar:/ {
+              sub(/sha256 ".*"/, "sha256 \"" sha "\"")
+              done = 1
+            }
+            { print }
+          ' ferrite.rb > ferrite.rb.tmp && mv ferrite.rb.tmp ferrite.rb
+          
+          # Note: Bottle checksums are updated separately by the build-bottles workflow
+          echo "Updated source SHA256 to ${SHA256}"
+          echo "Bottle checksums will be updated when bottles are built"
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v6

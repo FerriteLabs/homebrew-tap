@@ -13,10 +13,12 @@ class Ferrite < Formula
   # To update: run the update-formula workflow with the new version and SHA256,
   # or trigger a repository_dispatch event from the ferrite release workflow.
   # Placeholder below is replaced by CI on release.
-  sha256 "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
+  sha256 "PLACEHOLDER_SOURCE_SHA256_REPLACE_VIA_CI_RELEASE_WORKFLOW_000000000000"
   license "Apache-2.0"
 
-  depends_on "openssl@3"  head "https://github.com/ferritelabs/ferrite.git", branch: "main"
+  depends_on "openssl@3"
+
+  head "https://github.com/ferritelabs/ferrite.git", branch: "main"
 
   livecheck do
     url :stable
@@ -29,13 +31,16 @@ class Ferrite < Formula
     # Bottles are built and uploaded by the build-bottles workflow.
     # After a release, run: brew fetch --force ferrite
     # Bottle checksums are updated by the build-bottles CI workflow.
-    # Placeholder values below are replaced when bottles are built for each platform.
-    sha256 cellar: :any_skip_relocation, arm64_sonoma:  "b7d3e8f1a2c4569078901234567890abcdef1234567890abcdef1234567890ab"
-    sha256 cellar: :any_skip_relocation, arm64_ventura: "d9f0a1b2c3e4567890abcdef1234567890abcdef1234567890abcdef12345678"
-    sha256 cellar: :any_skip_relocation, arm64_sequoia: "f1a2b3c4d5e67890abcdef1234567890abcdef1234567890abcdef1234567890"
-    sha256 cellar: :any_skip_relocation, sonoma:        "c8e4f9a2b3d56701890abcdef1234567890abcdef1234567890abcdef12345678"
-    sha256 cellar: :any_skip_relocation, ventura:       "e0a1b2c3d4f5678901abcdef2345678901abcdef2345678901abcdef23456789"
-    sha256 cellar: :any_skip_relocation, x86_64_linux:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    #
+    # ⚠️  Values below are PLACEHOLDERS — CI replaces them when bottles are built.
+    # If you see these exact values, bottles have not been built for this version yet.
+    # Install from source instead: brew install --build-from-source ferrite
+    sha256 cellar: :any_skip_relocation, arm64_sonoma:  "PLACEHOLDER_SHA256_ARM64_SONOMA_REPLACE_VIA_CI_WORKFLOW"
+    sha256 cellar: :any_skip_relocation, arm64_ventura: "PLACEHOLDER_SHA256_ARM64_VENTURA_REPLACE_VIA_CI_WORKFLOW"
+    sha256 cellar: :any_skip_relocation, arm64_sequoia: "PLACEHOLDER_SHA256_ARM64_SEQUOIA_REPLACE_VIA_CI_WORKFLOW"
+    sha256 cellar: :any_skip_relocation, sonoma:        "PLACEHOLDER_SHA256_SONOMA_REPLACE_VIA_CI_WORKFLOW_00000"
+    sha256 cellar: :any_skip_relocation, ventura:       "PLACEHOLDER_SHA256_VENTURA_REPLACE_VIA_CI_WORKFLOW_0000"
+    sha256 cellar: :any_skip_relocation, x86_64_linux:  "PLACEHOLDER_SHA256_X86_64_LINUX_REPLACE_VIA_CI_WORKFLOW"
   end
 
   depends_on "rust" => :build
