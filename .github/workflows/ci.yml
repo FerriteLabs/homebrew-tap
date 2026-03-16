@@ -12,7 +12,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: echo "Lint checks pass"
+      - name: Check Ruby syntax
+        run: ruby -c ferrite.rb
+      - name: Verify formula structure
+        run: |
+          ruby -e '
+            content = File.read("ferrite.rb")
+            abort "Missing class definition" unless content.include?("class Ferrite < Formula")
+            abort "Missing homepage" unless content.include?("homepage")
+            abort "Missing url" unless content.include?("url")
+            abort "Missing sha256" unless content.include?("sha256")
+            abort "Missing desc" unless content.include?("desc")
+            abort "Missing license" unless content.include?("license")
+            puts "Formula structure OK"
+          '
 
   audit:
     name: Formula Audit
