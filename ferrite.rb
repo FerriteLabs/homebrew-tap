@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 class Ferrite < Formula
-  desc "High-performance, tiered-storage key-value store - drop-in Redis replacement"
+  desc "High-performance, tiered-storage key-value store - drop-in Redis replacement with agent memory, WASM functions, and verifiable audit"
   homepage "https://ferrite.rs"
   url "https://github.com/ferritelabs/ferrite/archive/refs/tags/v0.3.0.tar.gz"
   # SHA256 is automatically updated by the update-formula workflow when a new
@@ -52,13 +52,18 @@ class Ferrite < Formula
   depends_on "openssl@3" if OS.linux?
   uses_from_macos "curl"
 
+  option "with-forge", "Enable Forge WASM in-DB function runtime (ADR-019)"
+
   # Minimum Rust version: 1.88 (required for async trait and io_uring support)
   def install
-    # Build with TLS and CLI features enabled
-    system "cargo", "install", *std_cargo_args, "--features", "tls,cli"
+    features = "tls,cli"
+    features += ",forge-runtime" if build.with?("forge")
+
+    # Build with TLS and CLI features enabled (optionally with Forge)
+    system "cargo", "install", *std_cargo_args, "--features", features
 
     # Install CLI tools
-    system "cargo", "install", *std_cargo_args(path: "."), "--features", "tls,cli", "--bin", "ferrite-cli"
+    system "cargo", "install", *std_cargo_args(path: "."), "--features", features, "--bin", "ferrite-cli"
 
     # Install man pages if they exist
     man1.install Dir["docs/man/*.1"] if Dir.exist?("docs/man")
@@ -117,6 +122,9 @@ class Ferrite < Formula
   end
 
   test do
+    # Verify the binary runs and reports its version
+    assert_match version.to_s, shell_output("#{bin}/ferrite --version")
+
     # Start server in background
     port = free_port
     fork do
