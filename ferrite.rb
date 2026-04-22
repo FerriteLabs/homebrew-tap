@@ -127,22 +127,33 @@ class Ferrite < Formula
 
     # Start server in background
     port = free_port
-    fork do
+    server_pid = fork do
       exec bin/"ferrite", "--port", port.to_s
     end
-    sleep 2
 
-    # Test ping command
-    output = shell_output("#{bin}/ferrite-cli -p #{port} PING")
-    assert_match "PONG", output
+    # Wait for server to be ready (retry up to 10 times)
+    10.times do
+      break if shell_output("#{bin}/ferrite-cli -p #{port} PING 2>&1", 0).include?("PONG")
 
-    # Test basic operations
-    shell_output("#{bin}/ferrite-cli -p #{port} SET test_key test_value")
-    output = shell_output("#{bin}/ferrite-cli -p #{port} GET test_key")
-    assert_match "test_value", output
+      sleep 1
+    end
 
-    # Test database size
-    output = shell_output("#{bin}/ferrite-cli -p #{port} DBSIZE")
-    assert_match "1", output
+    begin
+      # Test ping command
+      output = shell_output("#{bin}/ferrite-cli -p #{port} PING")
+      assert_match "PONG", output
+
+      # Test basic operations
+      shell_output("#{bin}/ferrite-cli -p #{port} SET test_key test_value")
+      output = shell_output("#{bin}/ferrite-cli -p #{port} GET test_key")
+      assert_match "test_value", output
+
+      # Test database size
+      output = shell_output("#{bin}/ferrite-cli -p #{port} DBSIZE")
+      assert_match "1", output
+    ensure
+      Process.kill("TERM", server_pid)
+      Process.wait(server_pid)
+    end
   end
 end

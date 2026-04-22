@@ -167,7 +167,7 @@ file $(which ferrite)   # Should show "arm64"
 
 | Repository | Description |
 |-----------|-------------|
-| [ferrite](https://github.com/ferritelabs/ferrite) | Core database engine (Rust, 12 crates) |
+| [ferrite](https://github.com/ferritelabs/ferrite) | Core database engine (Rust, 19 crates) |
 | [ferrite-docs](https://github.com/ferritelabs/ferrite-docs) | Documentation website |
 | [ferrite-ops](https://github.com/ferritelabs/ferrite-ops) | Docker, Helm, Grafana, packaging |
 | [ferrite-bench](https://github.com/ferritelabs/ferrite-bench) | Performance benchmarks |

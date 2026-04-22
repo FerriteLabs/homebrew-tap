@@ -40,7 +40,7 @@ brew uninstall ferrite
 ## Formula Structure
 
 The formula in `ferrite.rb` handles:
-- **Dependencies**: Rust 1.88+, pkg-config, cmake, OpenSSL
+- **Dependencies**: Rust 1.80+, pkg-config, cmake, OpenSSL
 - **Build**: `cargo install` with `tls` and `cli` features
 - **Install**: Server binary + CLI + shell completions
 - **Service**: Homebrew service integration (`brew services start ferrite`)
