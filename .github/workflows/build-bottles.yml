@@ -12,11 +12,13 @@ on:
 
 jobs:
   validate:
-    name: Validate release version
+    name: Validate release version and formula/metadata integrity
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.resolve.outputs.version }}
     steps:
+      - uses: actions/checkout@v4
+
       # Untrusted event data is passed through env: and never
       # interpolated with the double-brace expression syntax directly
       # into a run: shell body, matching the hardening applied to
@@ -54,23 +56,133 @@ jobs:
           fi
           echo "Version ${VERSION} is valid SemVer"
 
+      # Bottles must never be built for a formula that has not actually
+      # been updated to the requested release yet: ferrite.rb's url
+      # version, its sha256, and release-metadata.json's version/sha256/
+      # url must all agree with each other and with the version
+      # requested for this run. Any disagreement fails the whole
+      # workflow closed before a single bottle is built.
+      - name: Validate formula and release metadata agree with the requested version
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          ruby - <<'RUBY'
+            require "json"
+
+            version = ENV.fetch("VERSION")
+            formula = File.read("ferrite.rb")
+
+            url_match = formula.match(/^\s*url\s+"([^"]+)"/)
+            abort "::error::could not find a top-level url stanza in ferrite.rb" unless url_match
+            formula_url = url_match[1]
+
+            formula_version_match = formula_url.match(%r{archive/refs/tags/v(\d+\.\d+\.\d+)\.tar\.gz\z})
+            unless formula_version_match
+              abort "::error::ferrite.rb url is not a vX.Y.Z tag archive: #{formula_url}"
+            end
+            formula_version = formula_version_match[1]
+
+            sha_match = formula.match(/^\s*sha256\s+"([0-9a-f]{64})"/)
+            abort "::error::could not find a well-formed source sha256 stanza in ferrite.rb" unless sha_match
+            formula_sha256 = sha_match[1]
+
+            unless formula_version == version
+              abort "::error::requested version (#{version}) does not match ferrite.rb's url version " \
+                    "(#{formula_version}). Refusing to build bottles for a formula that has not been " \
+                    "updated to this release yet - run update-formula.yml first."
+            end
+
+            metadata_path = "release-metadata.json"
+            abort "::error::#{metadata_path} does not exist" unless File.exist?(metadata_path)
+            metadata = JSON.parse(File.read(metadata_path))
+
+            %w[version sha256 url].each do |key|
+              abort "::error::#{metadata_path} is missing required key \"#{key}\"" unless metadata.key?(key)
+            end
+
+            unless metadata["version"] == version
+              abort "::error::requested version (#{version}) does not match #{metadata_path} version " \
+                    "(#{metadata["version"]})"
+            end
+
+            unless metadata["sha256"] == formula_sha256
+              abort "::error::#{metadata_path} sha256 (#{metadata["sha256"]}) does not match ferrite.rb " \
+                    "sha256 (#{formula_sha256})"
+            end
+
+            unless metadata["url"] == formula_url
+              abort "::error::#{metadata_path} url (#{metadata["url"]}) does not match ferrite.rb url " \
+                    "(#{formula_url})"
+            end
+
+            puts "OK: version #{version}, ferrite.rb, and #{metadata_path} all agree " \
+                 "(url=#{formula_url}, sha256=#{formula_sha256})"
+          RUBY
+
+      # The canonical checksum is always recomputed from the real tagged
+      # archive and compared against what ferrite.rb already has
+      # committed - never trusted from the formula/metadata files alone.
+      # A mismatch here means the tarball changed (or was tampered with)
+      # since the formula was last updated, so bottles must not be built.
+      - name: Recompute canonical archive checksum and compare
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          FORMULA_SHA256="$(ruby -e 'print File.read("ferrite.rb")[/^\s*sha256\s+"([0-9a-f]{64})"/, 1]')"
+          if [ -z "${FORMULA_SHA256}" ]; then
+            echo "::error::could not extract a well-formed sha256 from ferrite.rb"
+            exit 1
+          fi
+
+          ARCHIVE_URL="https://github.com/ferritelabs/ferrite/archive/refs/tags/v${VERSION}.tar.gz"
+          echo "Downloading canonical tagged archive: ${ARCHIVE_URL}"
+
+          COMPUTED_SHA256="$(curl -sSL --fail "${ARCHIVE_URL}" | sha256sum | awk "{print \$1}")"
+          if [ -z "${COMPUTED_SHA256}" ]; then
+            echo "::error::Failed to download or hash ${ARCHIVE_URL}"
+            exit 1
+          fi
+
+          if [ "${COMPUTED_SHA256}" != "${FORMULA_SHA256}" ]; then
+            echo "::error::Recomputed checksum (${COMPUTED_SHA256}) for ${ARCHIVE_URL} does not match ferrite.rb's committed sha256 (${FORMULA_SHA256}). Refusing to build bottles against a formula whose checksum no longer matches the real tagged archive."
+            exit 1
+          fi
+
+          echo "Verified: recomputed checksum matches ferrite.rb sha256 (${COMPUTED_SHA256})"
+
   bottle:
-    name: Build bottle (${{ matrix.arch }})
+    name: Build bottle (${{ matrix.expected_tag }})
     needs: validate
     strategy:
       fail-fast: false
       matrix:
+        # Every entry here must produce a genuinely distinct, currently
+        # supported Homebrew bottle platform tag. `brew bottle` derives
+        # the tag automatically from the OS/arch the job actually runs
+        # on (matrix labels below do not select it), so `expected_tag`
+        # is independently verified against the JSON `brew bottle`
+        # produces in the "Validate generated bottle JSON" step - if
+        # GitHub repoints a runner label at a different OS release, that
+        # step fails loudly instead of silently shipping a mislabeled or
+        # duplicate bottle.
+        #
+        # macos-13 (Ventura) is fully retired by GitHub as of Dec 2025
+        # and is dropped entirely rather than kept as a fake target.
+        # macos-14 is in its deprecation window but kept as the arm64
+        # "legacy" (Sonoma) target since many users have not yet
+        # upgraded; its Intel counterpart (macos-14-large) is dropped
+        # rather than doubling down on a deprecated OS on both arches.
         include:
+          - os: macos-15
+            expected_tag: arm64_sequoia
+          - os: macos-15-intel
+            expected_tag: sequoia
           - os: macos-14
-            arch: arm64_sonoma
-          - os: macos-14
-            arch: arm64_ventura
-          - os: macos-13
-            arch: sonoma
-          - os: macos-13
-            arch: ventura
+            expected_tag: arm64_sonoma
           - os: ubuntu-latest
-            arch: x86_64_linux
+            expected_tag: x86_64_linux
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -91,10 +203,40 @@ jobs:
           brew install --build-bottle ./ferrite.rb
           brew bottle --json --root-url="https://github.com/ferritelabs/homebrew-tap/releases/download/v${VERSION}" ./ferrite.rb
 
+      - name: Validate generated bottle JSON tag and filename
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          EXPECTED_TAG: ${{ matrix.expected_tag }}
+        run: |
+          set -euo pipefail
+          JSON_FILE="$(find . -maxdepth 1 -name 'ferrite--*.bottle.json' | head -n1)"
+          if [ -z "${JSON_FILE}" ]; then
+            echo "::error::brew bottle --json did not produce a ferrite--*.bottle.json file"
+            exit 1
+          fi
+
+          ACTUAL_TAG="$(ruby -rjson -e '
+            data = JSON.parse(File.read(ARGV[0]))
+            puts data.values.first.fetch("bottle").fetch("tags").keys.first
+          ' "${JSON_FILE}")"
+
+          if [ "${ACTUAL_TAG}" != "${EXPECTED_TAG}" ]; then
+            echo "::error::Runner '${{ matrix.os }}' produced bottle tag '${ACTUAL_TAG}' but the matrix expected '${EXPECTED_TAG}'. GitHub may have changed which OS/arch this runner label points to; update the matrix's expected_tag (or os) to match reality rather than shipping a mislabeled bottle."
+            exit 1
+          fi
+
+          EXPECTED_TARBALL="ferrite--${VERSION}.${EXPECTED_TAG}.bottle.tar.gz"
+          if [ ! -f "${EXPECTED_TARBALL}" ]; then
+            echo "::error::Expected bottle tarball ${EXPECTED_TARBALL} was not produced (found: $(find . -maxdepth 1 -name 'ferrite--*.bottle.tar.gz' | tr '\n' ' '))"
+            exit 1
+          fi
+
+          echo "Verified bottle tag '${ACTUAL_TAG}' and filename '${EXPECTED_TARBALL}' for ${{ matrix.os }}"
+
       - name: Upload bottle artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: bottle-${{ matrix.arch }}
+          name: bottle-${{ matrix.expected_tag }}
           path: |
             ferrite--*.bottle.tar.gz
             ferrite--*.bottle.json
@@ -120,27 +262,49 @@ jobs:
           merge-multiple: true
 
       - name: Validate expected bottle artifacts were produced
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
-          EXPECTED_COUNT=5
+          EXPECTED_TAGS="arm64_sequoia sequoia arm64_sonoma x86_64_linux"
+          EXPECTED_COUNT=4
+
           ACTUAL_COUNT="$(find . -maxdepth 1 -name "ferrite--*.bottle.json" | wc -l | tr -d "[:space:]")"
           if [ "${ACTUAL_COUNT}" -ne "${EXPECTED_COUNT}" ]; then
             echo "::error::Expected ${EXPECTED_COUNT} bottle JSON artifacts (one per matrix platform) but found ${ACTUAL_COUNT}. Refusing to merge a partial bottle set."
             exit 1
           fi
-          echo "Found all ${ACTUAL_COUNT} expected bottle artifacts"
+
+          for tag in ${EXPECTED_TAGS}; do
+            EXPECTED_JSON="ferrite--${VERSION}.${tag}.bottle.json"
+            EXPECTED_TARBALL="ferrite--${VERSION}.${tag}.bottle.tar.gz"
+            if [ ! -f "${EXPECTED_JSON}" ]; then
+              echo "::error::Missing expected bottle JSON for platform '${tag}': ${EXPECTED_JSON}"
+              exit 1
+            fi
+            if [ ! -f "${EXPECTED_TARBALL}" ]; then
+              echo "::error::Missing expected bottle tarball for platform '${tag}': ${EXPECTED_TARBALL}"
+              exit 1
+            fi
+          done
+
+          echo "Found all ${ACTUAL_COUNT} expected bottle artifacts for: ${EXPECTED_TAGS}"
 
       # Canonical Homebrew merge: brew bottle --merge reads the
       # per-platform JSON manifests and writes (or inserts, if none
       # exists yet) a single bottle do ... end block into the formula
-      # file itself. This replaces the previous hand-rolled
-      # regex/placeholder-substitution approach, which only worked when
-      # a bottle block with matching platform keys already existed.
+      # file itself. --keep-old preserves any existing bottle tags
+      # already committed in ferrite.rb that are not part of this run's
+      # JSON set, instead of silently dropping them - --merge --write
+      # without --keep-old replaces the entire bottle block with only
+      # the tags passed in, which would overwrite (not merge) a
+      # previously-recorded platform if a single matrix job failed to
+      # upload its artifact.
       - name: Merge bottle metadata into the formula
         run: |
           set -euo pipefail
           brew tap ferritelabs/homebrew-tap "$(pwd)"
-          brew bottle --merge --write --no-commit ferrite--*.bottle.json
+          brew bottle --merge --write --keep-old --no-commit ferrite--*.bottle.json
           echo "Merged bottle metadata:"
           sed -n "/bottle do/,/^  end/p" ferrite.rb
 

@@ -86,6 +86,93 @@ class WorkflowBehaviorTest < Minitest::Test
                  "must not reintroduce placeholder-regex substitution for bottle checksums")
   end
 
+  def test_build_bottles_merges_without_overwriting_existing_platforms
+    source = BUILD_BOTTLES.read
+    assert_match(/--merge/, source)
+    assert_match(/--keep-old/, source,
+                 "must pass --keep-old to brew bottle --merge, otherwise merging this run's " \
+                 "bottle JSON would replace (not merge with) any previously-recorded platform " \
+                 "not included in the current matrix")
+  end
+
+  # The matrix must build genuinely distinct, currently-supported bottle
+  # platforms - not duplicate/retired runner+arch combinations that
+  # silently produce the same (or a wrong) `brew bottle` tag.
+  def test_build_bottles_matrix_targets_distinct_supported_platforms
+    doc = load_yaml(BUILD_BOTTLES)
+    matrix = doc.dig("jobs", "bottle", "strategy", "matrix", "include")
+    refute_nil matrix, "bottle job must declare a matrix"
+    refute_empty matrix, "bottle job matrix must not be empty"
+
+    expected_tags = matrix.map { |entry| entry["expected_tag"] }
+    assert(expected_tags.all? { |tag| !tag.nil? && !tag.empty? },
+           "every matrix entry must declare an expected_tag")
+    duplicate_tags = expected_tags.group_by { |tag| tag }.select { |_, group| group.length > 1 }.keys
+    assert_equal expected_tags.uniq.length, expected_tags.length,
+                 "matrix entries must target distinct bottle tags (found duplicates: #{duplicate_tags})"
+
+    oses = matrix.map { |entry| entry["os"] }
+    refute(oses.any? { |os| os.to_s.include?("macos-13") },
+           "macos-13 is fully retired by GitHub; it must not appear in the bottle matrix")
+  end
+
+  def test_build_bottles_validates_generated_bottle_json_tag_and_filename
+    source = BUILD_BOTTLES.read
+    assert_match(/expected_tag/, source, "must compare the actual brew bottle tag against an expected value")
+    assert_match(/does not match/i, source,
+                 "must fail with a clear message when the produced tag does not match expectations")
+    assert_match(/bottle\.tar\.gz/, source, "must validate the produced bottle tarball filename")
+  end
+
+  def test_build_bottles_collect_job_count_matches_matrix_size
+    doc = load_yaml(BUILD_BOTTLES)
+    matrix = doc.dig("jobs", "bottle", "strategy", "matrix", "include")
+    matrix_size = matrix.length
+
+    source = BUILD_BOTTLES.read
+    expected_count_match = source.match(/EXPECTED_COUNT=(\d+)/)
+    refute_nil expected_count_match, "collect job must declare EXPECTED_COUNT"
+    assert_equal matrix_size, expected_count_match[1].to_i,
+                 "collect job's EXPECTED_COUNT (#{expected_count_match[1]}) must match the matrix size " \
+                 "(#{matrix_size}), or a shrinking/growing matrix will silently desync from the gate"
+  end
+
+  # Bottles must never be built for a formula that has not actually been
+  # updated to the requested release: ferrite.rb's url version/sha256,
+  # release-metadata.json's version/sha256/url, and the requested
+  # version must all be cross-checked, and the canonical archive
+  # checksum must be independently recomputed and compared - failing
+  # closed on any mismatch - before a single bottle is built.
+  def test_build_bottles_validates_formula_metadata_and_requested_version_agree
+    source = BUILD_BOTTLES.read
+    assert_match(/release-metadata\.json/, source,
+                 "must cross-check release-metadata.json against the formula and requested version")
+    assert_match(/formula_version == version|formula_url\.match/, source,
+                 "must compare the formula's url version against the requested version")
+    assert_match(/metadata\["sha256"\]\s*==\s*formula_sha256/, source,
+                 "must compare release-metadata.json's sha256 against ferrite.rb's sha256")
+  end
+
+  def test_build_bottles_recomputes_canonical_checksum_before_building
+    source = BUILD_BOTTLES.read
+    assert_match(/sha256sum|shasum\s+-a\s+256/, source,
+                 "must (re)compute a checksum from the real tagged archive before building bottles")
+    assert_match(/curl/, source, "must download the tagged archive to hash it")
+    assert_match(/COMPUTED_SHA256.*!=.*FORMULA_SHA256|FORMULA_SHA256.*!=.*COMPUTED_SHA256/, source,
+                 "must compare the recomputed checksum against the formula's committed sha256")
+  end
+
+  # These pre-build validation steps run in the `validate` job, which
+  # every other job (including `collect`) transitively depends on -
+  # so they gate the collect/release path as well as each build.
+  def test_build_bottles_validate_job_gates_bottle_and_collect_jobs
+    doc = load_yaml(BUILD_BOTTLES)
+    bottle_needs = Array(doc.dig("jobs", "bottle", "needs"))
+    collect_needs = Array(doc.dig("jobs", "collect", "needs"))
+    assert_includes bottle_needs, "validate", "bottle job must depend on validate"
+    assert_includes collect_needs, "validate", "collect job must (transitively) depend on validate"
+  end
+
   def test_build_bottles_does_not_push_directly_to_main
     doc = load_yaml(BUILD_BOTTLES)
     each_run_step(doc) do |run_script, job_name|

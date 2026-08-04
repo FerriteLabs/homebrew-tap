@@ -7,8 +7,14 @@ This directory contains the Homebrew formula for installing Ferrite on macOS and
 
 ## Installation
 
-> **Note:** Pre-built bottles are available for macOS (Apple Silicon and Intel) and Linux x86_64.
-> If no bottle is available for your platform, Homebrew will build from source automatically.
+> **Note:** Pre-built bottles are built for a small, deliberately real
+> (not padded) set of platforms: macOS Sequoia on Apple Silicon
+> (`arm64_sequoia`) and Intel (`sequoia`), macOS Sonoma on Apple Silicon
+> as a legacy target (`arm64_sonoma`), and Linux x86_64 (`x86_64_linux`).
+> See `.github/workflows/build-bottles.yml` for the exact, currently
+> supported matrix - it is updated as GitHub's hosted runner images
+> change. If no bottle is available for your platform, Homebrew will
+> build from source automatically.
 ### From Official Tap (Recommended)
 
 Once published, you can install Ferrite using:
