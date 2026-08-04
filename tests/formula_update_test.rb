@@ -87,6 +87,33 @@ class FormulaUpdateTest < Minitest::Test
     assert_match(/archive url does not match version/, error.message)
   end
 
+  def test_update_rejects_non_stable_versions_before_updating_formula
+    %w[01.2.3 1.2.3-rc.1 1.2.3+build.5].each do |version|
+      error = assert_raises(ArgumentError) do
+        FerriteTap::FormulaUpdater.update(
+          formula: FerriteTap.formula_source,
+          version: version,
+          sha256: NEW_SHA256,
+          archive_url: "https://github.com/ferritelabs/ferrite/archive/refs/tags/v#{version}.tar.gz",
+        )
+      end
+
+      assert_includes error.message, "stable release version exactly X.Y.Z"
+    end
+  end
+
+  def test_metadata_rejects_non_stable_versions
+    error = assert_raises(ArgumentError) do
+      FerriteTap::FormulaUpdater.metadata(
+        version: "1.2.3-alpha",
+        sha256: NEW_SHA256,
+        archive_url: "https://github.com/ferritelabs/ferrite/archive/refs/tags/v1.2.3-alpha.tar.gz",
+      )
+    end
+
+    assert_includes error.message, "no leading zeroes, prerelease, or build metadata"
+  end
+
   def test_workflow_updater_replaces_formula_and_metadata_files
     Dir.mktmpdir do |directory|
       formula_path = File.join(directory, "ferrite.rb")

@@ -59,7 +59,7 @@ repository); the `Status` column records what changed and where.
 | F3 | Maintainer reading `ferrite.rb` | Dependency list | N/A (readability / maintenance boundary) | Low (no functional break, cargo/brew tolerate duplicates) | Low-Medium (obscures real dependency intent, invites future drift) | `depends_on "openssl@3"` is declared unconditionally and then re-declared per-OS a few lines later. | **Resolved** (`4b5a18a`): the duplicate per-OS declarations were removed; `depends_on "openssl@3"` is now declared exactly once. `tests/formula_structure_test.rb#test_no_duplicate_openssl_dependency` guards against regression. |
 | F4 | Upstream Ferrite release CI (`repository_dispatch: ferrite-release`) or a human (`workflow_dispatch`) | `update-formula.yml` | Automation trusts external event payload as ground truth for `sha256` | Medium (a bad run produces a merged formula with a wrong checksum) | High (supply-chain: nothing recomputes or compares the checksum against the actual tagged tarball before it is committed) | The workflow copies `client_payload.sha256` / `inputs.sha256` directly into `ferrite.rb` via `sed`/`awk` with no verification step. | **Resolved** (`7f4bac3`): the workflow now always downloads and recomputes the canonical checksum of the tagged archive itself; a caller-supplied `sha256` is only ever used as an advisory cross-check and the run fails closed if it disagrees. `build-bottles.yml`'s `validate` job independently re-verifies this same invariant (formula/metadata/requested-version agreement, plus its own checksum recomputation) before any bottle is built. |
 | F5 | Upstream Ferrite release CI (`repository_dispatch: new-release`) or a human (`workflow_dispatch`) | `build-bottles.yml` `collect` job | `github-actions[bot]` pushes straight to `main`, skipping PR review that `update-formula.yml` uses for the identical file | Medium (five-platform matrix build cost per run) | High (a single compromised or buggy job can land arbitrary formula content on `main` without human review) | `collect` job runs `git commit` + `git push` directly instead of opening a pull request. | **Resolved** (`c0c6e79`, tightened by `6301779` and `eeeecc5`): `collect` uses canonical `brew bottle --merge --write --no-commit` and lands changes via `peter-evans/create-pull-request`. It now requires the exact complete JSON/tarball set, rejects a formula that still has prior-release bottle metadata, writes only the new validated set, copies Homebrew's merged tap clone back to the Actions checkout, and verifies the resulting root URL/tags/checksums with no rebuild metadata. Every change still goes through normal PR review. |
-| F6 | `update-formula.yml` / `build-bottles.yml` inputs | Version parameters (`version`, `sha256`) | No input validation boundary | Low | Medium (malformed version strings propagate into `url`, tag names, and release lookups) | Neither workflow validates that `version` is a well-formed SemVer string before interpolating it into URLs, branch names, and release tags. | **Resolved** (`7f4bac3`, `c0c6e79`): both workflows validate the requested version against a strict SemVer regex before it is used anywhere, failing closed with `::error::` otherwise. `build-bottles.yml` additionally cross-checks the requested version against `ferrite.rb`'s url version and `release-metadata.json` before building any bottle. |
+| F6 | `update-formula.yml` / `build-bottles.yml` inputs | Version parameters (`version`, `sha256`) | No input validation boundary | Low | Medium (malformed version strings propagate into `url`, tag names, and release lookups) | Neither workflow validates that `version` is a well-formed SemVer string before interpolating it into URLs, branch names, and release tags. | **Resolved** (`7f4bac3`, `c0c6e79`, tightened by the 2026-08-04 stable-only follow-up): both workflows now invoke the shared `scripts/release_version.rb` validator before the version becomes a workflow output or reaches any URL, branch, tag, artifact, download, or build. Only stable releases exactly `X.Y.Z` are accepted; leading zeroes, prereleases, build metadata, prefixes, whitespace, and extra components fail closed with a clear `::error::`. `build-bottles.yml` additionally applies the same validator to `ferrite.rb` and `release-metadata.json` versions before building any bottle. |
 | F7 | CI (`ci.yml` audit job) | Bottle-only structural check | Gatekeeper trusts regex-based platform scan | Low | Medium (the audit job asserts bottle *platforms* exist but never checks for placeholder *values*, so it currently passes against six placeholder checksums) | `Verify bottle configuration` step scans for `\w+:\s+"[a-f0-9]{64}"` which placeholder strings do not match in length, silently passing today only because the regex happens to reject them, not because it is designed to. | **Resolved** (`ci.yml`): the same step now explicitly rejects any `PLACEHOLDER` substring in the bottle block (not just relying on regex length mismatches), in addition to the pre-existing platform/ARM64 presence checks. `tests/formula_structure_test.rb#test_bottle_block_has_no_placeholder_checksums` and `tests/formula_checksum_test.rb` cover the source-tarball equivalent. |
 
 ## Current State
@@ -71,7 +71,8 @@ dependency-free test suite (`tests/run.sh`) unless noted otherwise:
   checksum-verified `sha256`; no placeholder values remain anywhere in the
   formula or its bottle metadata (there is currently no bottle block at all,
   pending the next real `build-bottles.yml` run).
-- `update-formula.yml` and `build-bottles.yml` both validate strict SemVer,
+- `update-formula.yml` and `build-bottles.yml` both accept only stable
+  release versions exactly `X.Y.Z` through one shared validator,
   never trust a caller-supplied checksum without independently recomputing
   and comparing it, and land every change via pull request rather than a
   direct push to `main`.
@@ -123,7 +124,8 @@ intentional; see the Verification Addendum below and
 2. The upstream release pipeline fires `repository_dispatch: ferrite-release`
    (or a maintainer runs `workflow_dispatch`) against this tap with
    `version`/`sha256` inputs.
-3. `update-formula.yml` resolves those inputs, validates strict SemVer,
+3. `update-formula.yml` resolves those inputs, validates a stable release
+   version exactly `X.Y.Z` before emitting any derived value,
    independently recomputes the canonical tagged-archive checksum (only
    ever cross-checking, never trusting, a caller-supplied `sha256`),
    removes any prior-version bottle block before atomically replacing the
@@ -458,3 +460,37 @@ Verification run this session:
   pass's tap-qualification fix; the real `ferritelabs/homebrew-tap`
   repository's CI runs on `Homebrew/actions/setup-homebrew@v1` GitHub-hosted
   runners, which do not require this `brew trust` step.
+
+## Verification Addendum (stable-release-only version automation)
+
+This review follow-up narrows all formula and bottle release automation from
+general SemVer to stable releases exactly `X.Y.Z`:
+
+- `scripts/release_version.rb` is the single validator and naming source for
+  stable versions, canonical archive URLs, `vX.Y.Z` release tags, formula
+  update branches, bottle update branches, and bottle release URLs. Each
+  numeric component is either `0` or a non-zero digit followed by digits.
+- `update-formula.yml` and `build-bottles.yml` validate untrusted input before
+  writing it to `GITHUB_OUTPUT`; therefore prerelease/build strings cannot
+  reach downloads, builds, artifact names, PR branches, or release tags.
+- `scripts/update_formula.rb`, release metadata helpers/tests, formula URL and
+  livecheck tests, and workflow behavior tests all use or enforce the same
+  stable-only contract. `build-bottles.yml` explicitly validates the versions
+  read from both `ferrite.rb` and `release-metadata.json`.
+- `ferrite.rb` and `release-metadata.json` remain at `0.4.0`; only the
+  formula's livecheck regex changed so it cannot treat prerelease/build tags
+  as stable releases.
+
+Verification on macOS system Bash 3.2.57:
+
+- `/bin/bash tests/run.sh --fast`: 8 files, 70 tests, 495 assertions,
+  0 failures/errors, 2 intentional skips.
+- `/bin/bash tests/run.sh`: 8 files, 70 tests, 498 assertions,
+  0 failures/errors, 1 intentional absent-bottle skip.
+- Ruby syntax passed for `ferrite.rb`, every `scripts/*.rb`, and every
+  `tests/*.rb`; `actionlint .github/workflows/*.yml` reported no findings.
+- Tap-qualified `brew audit --strict --online ferritelabs/ci/ferrite` and
+  `brew style ferritelabs/ci/ferrite` were both run after tapping the checkout
+  as `ferritelabs/ci`; both reported only the already-documented,
+  intentionally retained `post_install` directory-creation finding. The tap
+  was removed after verification.

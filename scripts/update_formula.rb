@@ -3,6 +3,7 @@
 require "json"
 require "tempfile"
 require "time"
+require_relative "release_version"
 
 module FerriteTap
   module FormulaUpdater
@@ -33,6 +34,8 @@ module FerriteTap
     end
 
     def metadata(version:, sha256:, archive_url:)
+      validate_inputs!(version, sha256, archive_url)
+
       {
         "version" => version,
         "sha256" => sha256,
@@ -57,7 +60,8 @@ module FerriteTap
     end
 
     def validate_inputs!(version, sha256, archive_url)
-      expected_url = "https://github.com/ferritelabs/ferrite/archive/refs/tags/v#{version}.tar.gz"
+      ReleaseVersion.validate!(version)
+      expected_url = ReleaseVersion.archive_url(version)
       raise "archive url does not match version #{version}" unless archive_url == expected_url
       raise "sha256 must be 64 lowercase hexadecimal characters" unless sha256.match?(/\A[0-9a-f]{64}\z/)
     end

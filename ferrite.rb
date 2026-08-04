@@ -19,7 +19,7 @@ class Ferrite < Formula
   livecheck do
     url :stable
     strategy :github_latest
-    regex(/v?(\d+(?:\.\d+)+)/i)
+    regex(/^v?((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/i)
   end
 
   option "with-forge", "Enable Forge WASM in-DB function runtime (ADR-019)"

@@ -26,7 +26,7 @@ jobs:
       # workflow_dispatch inputs) is passed through `env:` and never
       # interpolated with `${{ }}` directly into a `run:` script body, so
       # a malicious payload cannot inject shell syntax.
-      - name: Resolve release inputs
+      - name: Resolve and validate stable release inputs
         id: release
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -49,23 +49,26 @@ jobs:
             exit 1
           fi
 
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "supplied_sha256=${SUPPLIED_SHA256}" >> "$GITHUB_OUTPUT"
-
-      - name: Validate strict SemVer version
-        env:
-          VERSION: ${{ steps.release.outputs.version }}
-        run: |
-          set -euo pipefail
-          # Strict SemVer 2.0.0 core + optional pre-release/build metadata,
-          # without a leading "v" (the "v" prefix is only used in tag/url
-          # construction, never in the version value itself).
-          SEMVER_REGEX="^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$"
-          if ! [[ "${VERSION}" =~ ${SEMVER_REGEX} ]]; then
-            echo "::error::\"${VERSION}\" is not a valid strict SemVer version (expected e.g. 1.2.3)"
+          # Validate before exposing the value to any URL, branch, tag, or
+          # later workflow step. The shared validator accepts stable releases
+          # exactly X.Y.Z and rejects leading zeroes, prereleases, metadata,
+          # prefixes, whitespace, and extra components.
+          if ! VERSION="$(ruby scripts/release_version.rb "${VERSION}")"; then
             exit 1
           fi
-          echo "Version ${VERSION} is valid SemVer"
+
+          if [ -n "${SUPPLIED_SHA256}" ] && ! [[ "${SUPPLIED_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Supplied sha256 must be empty or 64 lowercase hexadecimal characters"
+            exit 1
+          fi
+
+          {
+            echo "version=${VERSION}"
+            echo "release_tag=v${VERSION}"
+            echo "formula_branch=update-ferrite-${VERSION}"
+            echo "archive_url=https://github.com/ferritelabs/ferrite/archive/refs/tags/v${VERSION}.tar.gz"
+            echo "supplied_sha256=${SUPPLIED_SHA256}"
+          } >> "$GITHUB_OUTPUT"
 
       # The canonical checksum is *always* recomputed from the real
       # tagged archive. A caller-supplied sha256 (from workflow_dispatch
@@ -74,11 +77,10 @@ jobs:
       - name: Compute canonical archive checksum
         id: checksum
         env:
-          VERSION: ${{ steps.release.outputs.version }}
+          ARCHIVE_URL: ${{ steps.release.outputs.archive_url }}
           SUPPLIED_SHA256: ${{ steps.release.outputs.supplied_sha256 }}
         run: |
           set -euo pipefail
-          ARCHIVE_URL="https://github.com/ferritelabs/ferrite/archive/refs/tags/v${VERSION}.tar.gz"
           echo "Downloading canonical tagged archive: ${ARCHIVE_URL}"
 
           COMPUTED_SHA256="$(curl -sSL --fail "${ARCHIVE_URL}" | sha256sum | awk "{print \$1}")"
@@ -118,12 +120,12 @@ jobs:
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v6
         with:
-          commit-message: "chore: bump ferrite to v${{ steps.release.outputs.version }}"
-          title: "chore: bump ferrite to v${{ steps.release.outputs.version }}"
+          commit-message: "chore: bump ferrite to ${{ steps.release.outputs.release_tag }}"
+          title: "chore: bump ferrite to ${{ steps.release.outputs.release_tag }}"
           body: |
-            Automated formula update for Ferrite v${{ steps.release.outputs.version }}.
+            Automated formula update for Ferrite ${{ steps.release.outputs.release_tag }}.
 
             Canonical SHA256 (recomputed from the tagged archive, not trusted
             from the triggering event): `${{ steps.checksum.outputs.sha256 }}`
-          branch: update-ferrite-${{ steps.release.outputs.version }}
+          branch: ${{ steps.release.outputs.formula_branch }}
           base: main

@@ -10,7 +10,7 @@ require "yaml"
 #   * untrusted event inputs are passed through `env:` rather than
 #     interpolated directly into `run:` shell scripts (script-injection
 #     hardening)
-#   * the version input is validated as strict SemVer before use
+#   * the version input is validated as a stable X.Y.Z release before use
 #   * the canonical tarball/bottle checksum is always (re)computed by the
 #     workflow itself rather than trusting a caller-supplied value
 #   * updates land via pull request (no direct unreviewed push to main)
@@ -21,6 +21,7 @@ class WorkflowBehaviorTest < Minitest::Test
   CI_WORKFLOW = FerriteTap::WORKFLOWS_DIR + "ci.yml"
   CHECKSUM_TEST = FerriteTap::ROOT + "tests" + "formula_checksum_test.rb"
   FORMULA_UPDATER = FerriteTap::ROOT + "scripts" + "update_formula.rb"
+  RELEASE_VERSION = FerriteTap::ROOT + "scripts" + "release_version.rb"
 
   def test_workflow_files_exist
     assert UPDATE_FORMULA.file?
@@ -49,8 +50,8 @@ class WorkflowBehaviorTest < Minitest::Test
     refute_run_steps_interpolate_expressions(UPDATE_FORMULA)
   end
 
-  def test_update_formula_validates_strict_semver
-    assert_has_semver_validation(UPDATE_FORMULA)
+  def test_update_formula_validates_stable_release_version
+    assert_has_stable_release_validation(UPDATE_FORMULA)
   end
 
   def test_update_formula_always_recomputes_canonical_checksum
@@ -94,7 +95,35 @@ class WorkflowBehaviorTest < Minitest::Test
   end
 
   def test_build_bottles_validates_version_input
-    assert_has_semver_validation(BUILD_BOTTLES)
+    assert_has_stable_release_validation(BUILD_BOTTLES)
+  end
+
+  def test_workflows_derive_branches_and_release_tags_from_validated_outputs
+    update_source = UPDATE_FORMULA.read
+    assert_match(/echo "release_tag=v\$\{VERSION\}"/, update_source)
+    assert_match(/echo "formula_branch=update-ferrite-\$\{VERSION\}"/, update_source)
+
+    update_doc = load_yaml(UPDATE_FORMULA)
+    update_steps = update_doc.dig("jobs", "update", "steps")
+    update_pr = update_steps.find { |step| step["uses"].to_s.include?("create-pull-request") }
+    assert_equal "${{ steps.release.outputs.formula_branch }}", update_pr.dig("with", "branch")
+
+    build_source = BUILD_BOTTLES.read
+    assert_match(/echo "release_tag=v\$\{VERSION\}"/, build_source)
+    assert_match(/echo "bottle_branch=update-ferrite-bottles-\$\{VERSION\}"/, build_source)
+    assert_match(%r{echo "bottle_release_url=https://github\.com/ferritelabs/homebrew-tap/releases/download/v\$\{VERSION\}"},
+                 build_source)
+
+    build_doc = load_yaml(BUILD_BOTTLES)
+    validate_outputs = build_doc.dig("jobs", "validate", "outputs")
+    assert_equal "${{ steps.release.outputs.release_tag }}", validate_outputs["release_tag"]
+    assert_equal "${{ steps.release.outputs.bottle_branch }}", validate_outputs["bottle_branch"]
+
+    collect_steps = build_doc.dig("jobs", "collect", "steps")
+    bottle_pr = collect_steps.find { |step| step["uses"].to_s.include?("create-pull-request") }
+    release = collect_steps.find { |step| step["uses"].to_s.include?("action-gh-release") }
+    assert_equal "${{ needs.validate.outputs.bottle_branch }}", bottle_pr.dig("with", "branch")
+    assert_equal "${{ needs.validate.outputs.release_tag }}", release.dig("with", "tag_name")
   end
 
   def test_build_bottles_uses_canonical_brew_bottle_merge
@@ -260,6 +289,10 @@ class WorkflowBehaviorTest < Minitest::Test
     source = BUILD_BOTTLES.read
     assert_match(/release-metadata\.json/, source,
                  "must cross-check release-metadata.json against the formula and requested version")
+    assert_match(/ReleaseVersion\.validate!\(metadata\["version"\]\)/, source,
+                 "must apply the shared strict stable-release validator to release metadata")
+    assert_match(/ReleaseVersion\.validate!\(formula_version\)/, source,
+                 "must apply the shared strict stable-release validator to ferrite.rb's url version")
     assert_match(/formula_version == version|formula_url\.match/, source,
                  "must compare the formula's url version against the requested version")
     assert_match(/metadata\["sha256"\]\s*==\s*formula_sha256/, source,
@@ -371,39 +404,29 @@ class WorkflowBehaviorTest < Minitest::Test
     end
   end
 
-  def assert_has_semver_validation(path)
+  def assert_has_stable_release_validation(path)
     source = path.read
-    regex_match = source.match(/SEMVER_REGEX="([^"]+)"/)
-    refute_nil regex_match, "workflow must define a SemVer validation regex"
+    assert_match(/ruby scripts\/release_version\.rb "\$\{VERSION\}"/, source,
+                 "#{path.basename} must use the shared stable-release validator")
+    refute_match(/SEMVER_REGEX=/, source,
+                 "#{path.basename} must not drift to a workflow-local version grammar")
 
-    semver = Regexp.new(regex_match[1])
-    %w[
-      0.0.0
-      1.2.3
-      1.2.3-alpha
-      1.2.3-alpha.1
-      1.2.3-0.3.7
-      1.2.3-x.7.z.92
-      1.2.3+build.5
-      1.2.3-alpha+build.5
-    ].each do |version|
-      assert_match semver, version, "#{path.basename} should accept valid SemVer #{version.inspect}"
-    end
+    validator_index = source.index(/ruby scripts\/release_version\.rb/)
+    output_index = source.index(/echo "version=\$\{VERSION\}"/)
+    download_index = source.index(/\bcurl\b/)
+    build_index = source.index(/brew install --build-bottle/)
 
-    %w[
-      v1.2.3
-      01.2.3
-      1.02.3
-      1.2.03
-      1.2
-      1.2.3-01
-      1.2.3-alpha..1
-      1.2.3-alpha.
-      1.2.3+
-      1.2.3+build..1
-    ].each do |version|
-      refute_match semver, version, "#{path.basename} should reject invalid SemVer #{version.inspect}"
-    end
+    refute_nil validator_index
+    refute_nil output_index
+    assert validator_index < output_index,
+           "#{path.basename} must validate before exposing the version as a workflow output"
+    assert validator_index < download_index,
+           "#{path.basename} must reject invalid versions before any download"
+    assert validator_index < build_index, "#{path.basename} must reject invalid versions before any build" if build_index
+
+    validator = RELEASE_VERSION.read
+    assert_match(/STABLE_PATTERN/, validator)
+    assert_match(/no leading zeroes, prerelease, or build metadata/, validator)
   end
 
   def assert_tests_run_before_pr(path)

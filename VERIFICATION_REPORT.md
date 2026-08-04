@@ -5,6 +5,37 @@ change was made; no unrelated changes existed to preserve. No push, merge,
 or history rewrite was performed - all work is local commits on the
 existing branch.
 
+## Stable-release-only review follow-up (2026-08-04)
+
+- Added one shared validator, `scripts/release_version.rb`, that accepts only
+  stable versions exactly `X.Y.Z`. Numeric components cannot have leading
+  zeroes; prerelease/build suffixes, `v` prefixes, whitespace, and extra
+  components are rejected with a clear error.
+- `update-formula.yml` and `build-bottles.yml` invoke that validator before
+  exposing the version as a workflow output. Archive/bottle URLs, PR branch
+  names, release tags, artifact names, downloads, and bottle builds therefore
+  consume only a validated stable version.
+- `scripts/update_formula.rb`, the release metadata helper/tests, formula
+  URL/livecheck checks, and workflow behavior tests enforce the same rule.
+  The bottle workflow also validates versions read from `ferrite.rb` and
+  `release-metadata.json` before any build.
+- `ferrite.rb` and `release-metadata.json` remain at version `0.4.0`.
+
+Verification:
+
+- `/bin/bash` is GNU Bash 3.2.57 on this macOS host.
+- `/bin/bash tests/run.sh --fast`: 8 files, 70 tests, 495 assertions,
+  0 failures/errors, 2 intentional skips.
+- `/bin/bash tests/run.sh`: 8 files, 70 tests, 498 assertions,
+  0 failures/errors, 1 intentional absent-bottle skip.
+- `ruby -c` passed for `ferrite.rb`, all scripts, and all test files.
+- `actionlint .github/workflows/*.yml`: no findings.
+- After `brew tap ferritelabs/ci "$(pwd)"`, both
+  `brew audit --strict --online ferritelabs/ci/ferrite` and
+  `brew style ferritelabs/ci/ferrite` ran and reported only the existing,
+  intentionally retained `post_install` directory-creation finding. The tap
+  was removed afterward.
+
 ## Review follow-up verification (2026-08-04)
 
 Commits `6301779` and `eeeecc5` resolve the two subsequent review findings

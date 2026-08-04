@@ -49,16 +49,27 @@ class FormulaStructureTest < Minitest::Test
   end
 
   def test_version_consistency_between_url_and_tag
-    url_match = @source.match(%r{archive/refs/tags/v(\d+\.\d+\.\d+)\.tar\.gz})
+    url_match = @source.match(%r{archive/refs/tags/v([^/]+)\.tar\.gz})
     refute_nil url_match, "url should reference a vX.Y.Z release tag archive"
 
     version = url_match[1]
-    assert_match(/\A\d+\.\d+\.\d+\z/, version, "release tag must be a SemVer-shaped version")
+    assert_equal version, FerriteTap::ReleaseVersion.validate!(version)
 
     # The head branch and livecheck strategy must stay consistent with a
     # tag-based release flow (not accidentally pointed at a branch tarball).
     assert_match(/head\s+"https:\/\/github\.com\/ferritelabs\/ferrite\.git",\s*branch:\s*"main"/, @source)
     assert_match(/strategy\s+:github_latest/, @source)
+  end
+
+  def test_livecheck_accepts_only_stable_release_tags
+    livecheck = @source.match(/livecheck do.*?regex\(\/(.+?)\/i\).*?end/m)
+    refute_nil livecheck, "livecheck must define a case-insensitive release tag regex"
+
+    regex = Regexp.new(livecheck[1], Regexp::IGNORECASE)
+    %w[v0.4.0 1.2.3 v10.20.30].each { |tag| assert_match regex, tag }
+    %w[v01.2.3 v1.02.3 v1.2.03 v1.2.3-rc.1 v1.2.3+build.5 v1.2.3.4].each do |tag|
+      refute_match regex, tag
+    end
   end
 
   def test_no_duplicate_openssl_dependency

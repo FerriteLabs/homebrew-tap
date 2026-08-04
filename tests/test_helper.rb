@@ -8,10 +8,13 @@
 
 require "minitest/autorun"
 require "pathname"
+require "json"
+require_relative "../scripts/release_version"
 
 module FerriteTap
   ROOT = Pathname.new(File.expand_path("..", __dir__))
   FORMULA_PATH = ROOT + "ferrite.rb"
+  RELEASE_METADATA_PATH = ROOT + "release-metadata.json"
   WORKFLOWS_DIR = ROOT + ".github" + "workflows"
 
   # Network-bound assertions (e.g. downloading the release tarball to
@@ -26,5 +29,11 @@ module FerriteTap
 
   def self.formula_source
     FORMULA_PATH.read
+  end
+
+  def self.release_metadata
+    metadata = JSON.parse(RELEASE_METADATA_PATH.read)
+    ReleaseVersion.validate!(metadata.fetch("version"))
+    metadata
   end
 end

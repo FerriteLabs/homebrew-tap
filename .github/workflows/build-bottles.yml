@@ -15,7 +15,10 @@ jobs:
     name: Validate release version and formula/metadata integrity
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.resolve.outputs.version }}
+      version: ${{ steps.release.outputs.version }}
+      release_tag: ${{ steps.release.outputs.release_tag }}
+      bottle_branch: ${{ steps.release.outputs.bottle_branch }}
+      bottle_release_url: ${{ steps.release.outputs.bottle_release_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -23,8 +26,8 @@ jobs:
       # interpolated with the double-brace expression syntax directly
       # into a run: shell body, matching the hardening applied to
       # update-formula.yml.
-      - name: Resolve version from triggering event
-        id: resolve
+      - name: Resolve and validate stable release version
+        id: release
         env:
           EVENT_NAME: ${{ github.event_name }}
           DISPATCH_VERSION: ${{ github.event.client_payload.version }}
@@ -42,22 +45,19 @@ jobs:
             exit 1
           fi
 
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-
-      - name: Validate strict SemVer version
-        env:
-          VERSION: ${{ steps.resolve.outputs.version }}
-        run: |
-          set -euo pipefail
-          # SemVer 2.0.0: numeric core identifiers cannot have leading
-          # zeroes, numeric pre-release identifiers cannot have leading
-          # zeroes, and every dot-separated identifier must be non-empty.
-          SEMVER_REGEX="^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$"
-          if ! [[ "${VERSION}" =~ ${SEMVER_REGEX} ]]; then
-            echo "::error::\"${VERSION}\" is not a valid strict SemVer version (expected e.g. 1.2.3)"
+          # Validate before exposing the value to any URL, branch, tag,
+          # artifact name, download, or build step.
+          if ! VERSION="$(ruby scripts/release_version.rb "${VERSION}")"; then
             exit 1
           fi
-          echo "Version ${VERSION} is valid SemVer"
+
+          {
+            echo "version=${VERSION}"
+            echo "release_tag=v${VERSION}"
+            echo "bottle_branch=update-ferrite-bottles-${VERSION}"
+            echo "archive_url=https://github.com/ferritelabs/ferrite/archive/refs/tags/v${VERSION}.tar.gz"
+            echo "bottle_release_url=https://github.com/ferritelabs/homebrew-tap/releases/download/v${VERSION}"
+          } >> "$GITHUB_OUTPUT"
 
       # Bottles must never be built for a formula that has not actually
       # been updated to the requested release yet: ferrite.rb's url
@@ -67,11 +67,12 @@ jobs:
       # workflow closed before a single bottle is built.
       - name: Validate formula and release metadata agree with the requested version
         env:
-          VERSION: ${{ steps.resolve.outputs.version }}
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
           ruby - <<'RUBY'
             require "json"
+            require_relative "scripts/release_version"
 
             version = ENV.fetch("VERSION")
             formula = File.read("ferrite.rb")
@@ -87,6 +88,11 @@ jobs:
               abort "::error::ferrite.rb url is not the canonical Ferrite version-tag archive: #{formula_url}"
             end
             formula_version = formula_version_match[1]
+            begin
+              FerriteTap::ReleaseVersion.validate!(formula_version)
+            rescue ArgumentError => e
+              abort "::error::ferrite.rb url version is invalid: #{e.message}"
+            end
 
             sha_match = formula.match(/^\s*sha256\s+"([0-9a-f]{64})"/)
             abort "::error::could not find a well-formed source sha256 stanza in ferrite.rb" unless sha_match
@@ -104,6 +110,12 @@ jobs:
 
             %w[version sha256 url].each do |key|
               abort "::error::#{metadata_path} is missing required key \"#{key}\"" unless metadata.key?(key)
+            end
+
+            begin
+              FerriteTap::ReleaseVersion.validate!(metadata["version"])
+            rescue ArgumentError => e
+              abort "::error::#{metadata_path} version is invalid: #{e.message}"
             end
 
             unless metadata["version"] == version
@@ -132,7 +144,7 @@ jobs:
       # since the formula was last updated, so bottles must not be built.
       - name: Recompute canonical archive checksum and compare
         env:
-          VERSION: ${{ steps.resolve.outputs.version }}
+          ARCHIVE_URL: ${{ steps.release.outputs.archive_url }}
         run: |
           set -euo pipefail
           FORMULA_SHA256="$(ruby -e 'print File.read("ferrite.rb")[/^\s*sha256\s+"([0-9a-f]{64})"/, 1]')"
@@ -141,7 +153,6 @@ jobs:
             exit 1
           fi
 
-          ARCHIVE_URL="https://github.com/ferritelabs/ferrite/archive/refs/tags/v${VERSION}.tar.gz"
           echo "Downloading canonical tagged archive: ${ARCHIVE_URL}"
 
           COMPUTED_SHA256="$(curl -sSL --fail "${ARCHIVE_URL}" | sha256sum | awk "{print \$1}")"
@@ -215,11 +226,11 @@ jobs:
 
       - name: Build bottle
         env:
-          VERSION: ${{ needs.validate.outputs.version }}
+          BOTTLE_RELEASE_URL: ${{ needs.validate.outputs.bottle_release_url }}
         run: |
           set -euo pipefail
           brew install --build-bottle ferritelabs/ci/ferrite
-          brew bottle --json --root-url="https://github.com/ferritelabs/homebrew-tap/releases/download/v${VERSION}" ferritelabs/ci/ferrite
+          brew bottle --json --root-url="${BOTTLE_RELEASE_URL}" ferritelabs/ci/ferrite
 
       - name: Validate generated bottle JSON tag and filename
         env:
@@ -282,6 +293,7 @@ jobs:
       - name: Validate expected bottle artifacts were produced
         env:
           VERSION: ${{ needs.validate.outputs.version }}
+          BOTTLE_RELEASE_URL: ${{ needs.validate.outputs.bottle_release_url }}
         run: |
           set -euo pipefail
           EXPECTED_TAGS="arm64_sequoia sequoia arm64_sonoma x86_64_linux"
@@ -306,7 +318,6 @@ jobs:
               exit 1
             fi
 
-            EXPECTED_ROOT_URL="https://github.com/ferritelabs/homebrew-tap/releases/download/v${VERSION}"
             ruby -rjson -e '
               path, version, expected_tag, expected_root_url = ARGV
               data = JSON.parse(File.read(path))
@@ -322,7 +333,7 @@ jobs:
               pkg_version = formula.fetch("formula").fetch("pkg_version")
               abort "::error::#{path} has package version #{pkg_version.inspect}, expected #{version}" \
                 unless pkg_version == version
-            ' "${EXPECTED_JSON}" "${VERSION}" "${tag}" "${EXPECTED_ROOT_URL}"
+            ' "${EXPECTED_JSON}" "${VERSION}" "${tag}" "${BOTTLE_RELEASE_URL}"
           done
 
           echo "Validated the complete ${ACTUAL_JSON_COUNT}-platform bottle set for: ${EXPECTED_TAGS}"
@@ -334,7 +345,7 @@ jobs:
       # belong to a different source version and must never be preserved.
       - name: Merge bottle metadata into the formula
         env:
-          VERSION: ${{ needs.validate.outputs.version }}
+          BOTTLE_RELEASE_URL: ${{ needs.validate.outputs.bottle_release_url }}
         run: |
           set -euo pipefail
           if grep -q "^[[:space:]]*bottle do" ferrite.rb; then
@@ -397,8 +408,7 @@ jobs:
           sed -n "/bottle do/,/^  end/p" ferrite.rb
 
           ruby -rjson -e '
-            version = ENV.fetch("VERSION")
-            expected_root_url = "https://github.com/ferritelabs/homebrew-tap/releases/download/v#{version}"
+            expected_root_url = ENV.fetch("BOTTLE_RELEASE_URL")
             expected = Dir["ferrite--*.bottle.json"].sort.each_with_object({}) do |path, checksums|
               formula = JSON.parse(File.read(path)).values.first
               bottle = formula.fetch("bottle")
@@ -440,22 +450,22 @@ jobs:
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v6
         with:
-          commit-message: "chore: add bottle checksums for v${{ needs.validate.outputs.version }}"
-          title: "chore: add bottle checksums for v${{ needs.validate.outputs.version }}"
+          commit-message: "chore: add bottle checksums for ${{ needs.validate.outputs.release_tag }}"
+          title: "chore: add bottle checksums for ${{ needs.validate.outputs.release_tag }}"
           body: |
-            Automated bottle metadata update for Ferrite v${{ needs.validate.outputs.version }}.
+            Automated bottle metadata update for Ferrite ${{ needs.validate.outputs.release_tag }}.
 
             Generated by `brew bottle --merge` from the per-platform bottle
             manifests built in this workflow run. No direct push to main is
             made; this pull request goes through normal CI and review like
             any other formula change.
-          branch: update-ferrite-bottles-${{ needs.validate.outputs.version }}
+          branch: ${{ needs.validate.outputs.bottle_branch }}
           base: main
 
       - name: Create release with bottles
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ needs.validate.outputs.version }}
+          tag_name: ${{ needs.validate.outputs.release_tag }}
           files: ferrite--*.bottle.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
