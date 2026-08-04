@@ -157,10 +157,37 @@ class FormulaStructureTest < Minitest::Test
     refute_match(/shell_output\(/, retry_body,
                  "the readiness poll must not use shell_output, which raises on the transient " \
                  "non-zero exit every ferrite-cli call returns before the server is listening")
-    assert_match(/system\(/, retry_body,
-                 "the readiness poll should use a quiet system(...) call that returns a boolean " \
-                 "instead of raising on a not-yet-ready server")
+    assert_match(/Kernel\.system\(/, retry_body,
+                 "the readiness poll should use a quiet Kernel.system(...) call that returns a " \
+                 "boolean instead of raising on a not-yet-ready server")
     assert_match(/out:\s*File::NULL/, retry_body, "the readiness poll should discard command output")
+    assert_match(/err:\s*File::NULL/, retry_body, "the readiness poll should discard command error output")
+  end
+
+  # `system(...)` called bare inside a Formula's `test do` block resolves
+  # to `Formula#system` (instance method lookup finds it before
+  # `Kernel#system`), which raises `BuildError` on a non-zero exit and
+  # does not accept `out:`/`err:` redirection keywords - either of which
+  # would break the retry loop above outright. The readiness poll must
+  # call `Kernel.system` explicitly (bypassing that method-resolution
+  # order) and must pass a real String command (`.to_s`), not a bare
+  # Pathname, matching `Kernel.system`'s documented argument handling.
+  def test_readiness_poll_uses_kernel_system_not_formula_system
+    test_match = @source.match(/\btest do(.*)\z/m)
+    refute_nil test_match, "test do block must be present"
+
+    body = test_match[1]
+    retry_match = body.match(/(\d+)\.times do(.*?)\n\s*end\n/m)
+    refute_nil retry_match, "test block must retry the readiness check in a Ruby retry loop"
+
+    retry_body = retry_match[2]
+    refute_match(/[^.\w]system\(\s*bin/, retry_body,
+                 "the readiness poll must not call bare system(...), which resolves to " \
+                 "Formula#system (raises BuildError, no out:/err: support) inside a test do block")
+    assert_match(/Kernel\.system\(\s*\(bin\s*\/\s*"ferrite-cli"\)\.to_s/, retry_body,
+                 "the readiness poll must call Kernel.system((bin/\"ferrite-cli\").to_s, ...) " \
+                 "explicitly so it is Kernel#system (boolean, non-raising, redirection-capable), " \
+                 "not Formula#system")
   end
 
   def test_ensure_clause_always_terminates_and_reaps_server_pid

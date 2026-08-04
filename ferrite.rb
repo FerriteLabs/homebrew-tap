@@ -119,14 +119,27 @@ class Ferrite < Formula
     # ready, a functional assertion fails, or everything succeeds.
     begin
       # Wait for the server to be ready (retry up to 10 times). Polling
-      # uses a quiet `system` call instead of `shell_output`: ferrite-cli
-      # exits non-zero on every attempt before the server has bound its
-      # port, and shell_output(cmd) asserts a zero exit status by
-      # default, so using it here would raise (and fail the test) on the
-      # very first retry instead of giving the server a chance to start.
+      # uses a quiet `Kernel.system` call instead of `shell_output`:
+      # ferrite-cli exits non-zero on every attempt before the server has
+      # bound its port, and shell_output(cmd) asserts a zero exit status
+      # by default, so using it here would raise (and fail the test) on
+      # the very first retry instead of giving the server a chance to
+      # start.
+      #
+      # This must call `Kernel.system` explicitly rather than a bare
+      # `system(...)`: inside a Formula's `test do` block, `self` is the
+      # Formula instance, so an unqualified `system` call resolves to
+      # `Formula#system` (method lookup finds it before `Kernel#system`)
+      # - which does not accept `out:`/`err:` redirection keywords and,
+      # more importantly, raises `BuildError` on a non-zero exit instead
+      # of returning `false`. Either of those would break this retry
+      # loop outright: it would either fail with an argument/type error
+      # or raise (and fail the test) on the very first not-yet-ready
+      # attempt. `Kernel.system` is the real, non-raising boolean
+      # `system(2)` wrapper with proper redirection support.
       ready = false
       10.times do
-        ready = system(bin/"ferrite-cli", "-p", port.to_s, "PING", out: File::NULL, err: File::NULL)
+        ready = Kernel.system((bin/"ferrite-cli").to_s, "-p", port.to_s, "PING", out: File::NULL, err: File::NULL)
         break if ready
 
         sleep 1
