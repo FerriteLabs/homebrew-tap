@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Replaced the placeholder source `url`/`sha256` in `ferrite.rb` with the
+  real v0.4.0 tarball location and verified checksum (the previous
+  0.4.0 entry below updated the description and `--with-forge` option,
+  but left the source stanza pointed at v0.3.0 with a placeholder
+  checksum, so installs were broken until this fix).
+- Removed the placeholder `bottle do` block entirely; no real bottle
+  metadata exists yet, so `brew install ferrite` now builds from source
+  instead of attempting to fetch an unresolvable bottle artifact.
+- Removed the duplicate unconditional `depends_on "openssl@3"` that
+  preceded the OS-guarded declarations.
+
 ## [0.4.0] - 2026-04-20
 
 ### Changed

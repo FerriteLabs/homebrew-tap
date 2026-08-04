@@ -4,19 +4,13 @@
 class Ferrite < Formula
   desc "High-performance, tiered-storage key-value store - drop-in Redis replacement with agent memory, WASM functions, and verifiable audit"
   homepage "https://ferrite.rs"
-  url "https://github.com/ferritelabs/ferrite/archive/refs/tags/v0.3.0.tar.gz"
-  # SHA256 is automatically updated by the update-formula workflow when a new
-  # tag is pushed to ferritelabs/ferrite. To compute manually:
-  #   curl -sL <url> | shasum -a 256
-  # Verify checksum after download: brew fetch --verify-sha ferrite
-  #
-  # To update: run the update-formula workflow with the new version and SHA256,
-  # or trigger a repository_dispatch event from the ferrite release workflow.
-  # Placeholder below is replaced by CI on release.
-  sha256 "PLACEHOLDER_SOURCE_SHA256_REPLACE_VIA_CI_RELEASE_WORKFLOW_000000000000"
+  url "https://github.com/ferritelabs/ferrite/archive/refs/tags/v0.4.0.tar.gz"
+  # SHA256 of the v0.4.0 release tarball, verified against the upstream
+  # GitHub archive. To recompute manually: curl -sL <url> | shasum -a 256
+  # This value is kept in sync by the update-formula workflow, which
+  # recomputes the canonical checksum itself rather than trusting inputs.
+  sha256 "b4db8cc8eb0d3c2cef4a019a47d550c347df69fb8a4f77550c814fae463005cf"
   license "Apache-2.0"
-
-  depends_on "openssl@3"
 
   head "https://github.com/ferritelabs/ferrite.git", branch: "main"
 
@@ -26,35 +20,18 @@ class Ferrite < Formula
     regex(/v?(\d+(?:\.\d+)+)/i)
   end
 
-  bottle do
-    root_url "https://github.com/ferritelabs/homebrew-tap/releases/download/v#{version}"
-    # Bottles are built and uploaded by the build-bottles workflow.
-    # After a release, run: brew fetch --force ferrite
-    # Bottle checksums are updated by the build-bottles CI workflow.
-    #
-    # ⚠️  Values below are PLACEHOLDERS — CI replaces them when bottles are built.
-    # If you see these exact values, bottles have not been built for this version yet.
-    # Install from source instead: brew install --build-from-source ferrite
-    sha256 cellar: :any_skip_relocation, arm64_sonoma:  "PLACEHOLDER_SHA256_ARM64_SONOMA_REPLACE_VIA_CI_WORKFLOW"
-    sha256 cellar: :any_skip_relocation, arm64_ventura: "PLACEHOLDER_SHA256_ARM64_VENTURA_REPLACE_VIA_CI_WORKFLOW"
-    sha256 cellar: :any_skip_relocation, arm64_sequoia: "PLACEHOLDER_SHA256_ARM64_SEQUOIA_REPLACE_VIA_CI_WORKFLOW"
-    sha256 cellar: :any_skip_relocation, sonoma:        "PLACEHOLDER_SHA256_SONOMA_REPLACE_VIA_CI_WORKFLOW_00000"
-    sha256 cellar: :any_skip_relocation, ventura:       "PLACEHOLDER_SHA256_VENTURA_REPLACE_VIA_CI_WORKFLOW_0000"
-    sha256 cellar: :any_skip_relocation, x86_64_linux:  "PLACEHOLDER_SHA256_X86_64_LINUX_REPLACE_VIA_CI_WORKFLOW"
-  end
-
   depends_on "rust" => :build
   depends_on "pkg-config" => :build
   depends_on "cmake" => :build
-  # Runtime dependency for TLS support
-  # On macOS, prefer the Homebrew-installed OpenSSL over system LibreSSL
-  depends_on "openssl@3" if OS.mac?
-  depends_on "openssl@3" if OS.linux?
+  # Runtime dependency for TLS support on every supported platform.
+  # On macOS, prefer the Homebrew-installed OpenSSL over system LibreSSL.
+  depends_on "openssl@3"
   uses_from_macos "curl"
 
   option "with-forge", "Enable Forge WASM in-DB function runtime (ADR-019)"
 
-  # Minimum Rust version: 1.88 (required for async trait and io_uring support)
+  # Minimum Rust version is declared upstream via Cargo.toml rust-version;
+  # see https://github.com/ferritelabs/ferrite/blob/v0.4.0/Cargo.toml
   def install
     features = "tls,cli"
     features += ",forge-runtime" if build.with?("forge")
