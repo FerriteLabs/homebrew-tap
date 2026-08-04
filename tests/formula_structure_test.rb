@@ -107,6 +107,77 @@ class FormulaStructureTest < Minitest::Test
     assert_match(/PING/, body, "test block should exercise a basic server round-trip")
   end
 
+  # Structural invariants for the server-readiness retry/cleanup pattern:
+  # the readiness poll and every assertion that depends on the running
+  # server must live inside a single begin/ensure so the forked
+  # server_pid is always terminated and reaped, and the poll itself must
+  # not use an assertion (shell_output's default 0-exit check) against a
+  # command that is *expected* to fail on early retries.
+  def test_do_block_readiness_polling_is_inside_begin_ensure
+    test_match = @source.match(/\btest do(.*)\z/m)
+    refute_nil test_match, "test do block must be present"
+
+    body = test_match[1]
+
+    fork_index = body.index(/server_pid\s*=\s*fork\s+do/)
+    refute_nil fork_index, "test block must fork the server into server_pid"
+
+    begin_index = body.index(/^\s*begin\s*$/)
+    refute_nil begin_index, "test block must open a begin block around the server lifecycle"
+
+    ensure_index = body.index(/^\s*ensure\s*$/)
+    refute_nil ensure_index, "test block must have an ensure clause to clean up the server"
+
+    retry_index = body.index(/\d+\.times do/)
+    refute_nil retry_index, "test block must retry the readiness check"
+
+    readiness_assert_index = body.index(/assert\s+ready\b/)
+    refute_nil readiness_assert_index, "test block must require readiness before continuing"
+
+    assert fork_index < begin_index,
+           "the server must be forked before the begin block so ensure can always see server_pid"
+    assert begin_index < retry_index,
+           "the readiness retry loop must be inside the begin block (so cleanup always runs)"
+    assert retry_index < ensure_index,
+           "the readiness retry loop must complete before the ensure clause"
+    assert begin_index < readiness_assert_index && readiness_assert_index < ensure_index,
+           "the readiness requirement must be asserted inside begin/ensure, not after it"
+  end
+
+  def test_readiness_poll_does_not_assert_on_transient_nonzero_exit
+    test_match = @source.match(/\btest do(.*)\z/m)
+    refute_nil test_match, "test do block must be present"
+
+    body = test_match[1]
+
+    retry_match = body.match(/(\d+)\.times do(.*?)\n\s*end\n/m)
+    refute_nil retry_match, "test block must retry the readiness check in a Ruby retry loop"
+
+    retry_body = retry_match[2]
+    refute_match(/shell_output\(/, retry_body,
+                 "the readiness poll must not use shell_output, which raises on the transient " \
+                 "non-zero exit every ferrite-cli call returns before the server is listening")
+    assert_match(/system\(/, retry_body,
+                 "the readiness poll should use a quiet system(...) call that returns a boolean " \
+                 "instead of raising on a not-yet-ready server")
+    assert_match(/out:\s*File::NULL/, retry_body, "the readiness poll should discard command output")
+  end
+
+  def test_ensure_clause_always_terminates_and_reaps_server_pid
+    test_match = @source.match(/\btest do(.*)\z/m)
+    refute_nil test_match, "test do block must be present"
+
+    body = test_match[1]
+    ensure_match = body.match(/^\s*ensure\s*$(.*?)\n\s*end\n\s*end\n\z/m)
+    refute_nil ensure_match, "test block must have an ensure clause"
+
+    ensure_body = ensure_match[1]
+    assert_match(/Process\.kill\("TERM",\s*server_pid\)/, ensure_body,
+                 "ensure clause must terminate the exact forked server_pid")
+    assert_match(/Process\.wait\(server_pid\)/, ensure_body,
+                 "ensure clause must reap the exact forked server_pid to avoid a zombie process")
+  end
+
   def test_install_defines_forge_feature_toggle
     install_match = @source.match(/def install(.*?)\n\s*end\n/m)
     refute_nil install_match, "install method must be present"

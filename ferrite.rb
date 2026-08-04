@@ -113,14 +113,26 @@ class Ferrite < Formula
       exec bin/"ferrite", "--port", port.to_s
     end
 
-    # Wait for server to be ready (retry up to 10 times)
-    10.times do
-      break if shell_output("#{bin}/ferrite-cli -p #{port} PING 2>&1").include?("PONG")
-
-      sleep 1
-    end
-
+    # Readiness polling and every assertion that depends on the server
+    # live inside this single begin/ensure so the forked server_pid is
+    # *always* terminated and reaped, whether the server never becomes
+    # ready, a functional assertion fails, or everything succeeds.
     begin
+      # Wait for the server to be ready (retry up to 10 times). Polling
+      # uses a quiet `system` call instead of `shell_output`: ferrite-cli
+      # exits non-zero on every attempt before the server has bound its
+      # port, and shell_output(cmd) asserts a zero exit status by
+      # default, so using it here would raise (and fail the test) on the
+      # very first retry instead of giving the server a chance to start.
+      ready = false
+      10.times do
+        ready = system("#{bin}/ferrite-cli", "-p", port.to_s, "PING", out: File::NULL, err: File::NULL)
+        break if ready
+
+        sleep 1
+      end
+      assert ready, "ferrite server did not become ready on port #{port} within 10 seconds"
+
       # Test ping command
       output = shell_output("#{bin}/ferrite-cli -p #{port} PING")
       assert_match "PONG", output
