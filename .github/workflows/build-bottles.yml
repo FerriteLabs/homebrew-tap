@@ -200,13 +200,26 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # Every Homebrew invocation below is tap-qualified
+      # (ferritelabs/ci/ferrite), never a bare path (./ferrite.rb).
+      # Path-based `brew install`/`brew bottle` builds a formula with no
+      # stable tap identity, which is what makes the bottle JSON's
+      # embedded `formula.path` a raw, runner-specific filesystem path
+      # in the first place (see the collect job's normalization step).
+      # Tapping under the same deterministic name on every runner keeps
+      # that embedded path shaped as a Homebrew-relative tap path
+      # instead, and matches the tap-qualified `brew audit`/`brew style`
+      # already required elsewhere in this workflow and in ci.yml.
+      - name: Tap the checkout under a deterministic name
+        run: brew tap ferritelabs/ci "$(pwd)"
+
       - name: Build bottle
         env:
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
-          brew install --build-bottle ./ferrite.rb
-          brew bottle --json --root-url="https://github.com/ferritelabs/homebrew-tap/releases/download/v${VERSION}" ./ferrite.rb
+          brew install --build-bottle ferritelabs/ci/ferrite
+          brew bottle --json --root-url="https://github.com/ferritelabs/homebrew-tap/releases/download/v${VERSION}" ferritelabs/ci/ferrite
 
       - name: Validate generated bottle JSON tag and filename
         env:

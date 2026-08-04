@@ -127,6 +127,41 @@ class WorkflowBehaviorTest < Minitest::Test
                  "collect must copy the merged checkout formula into the local tap before audit")
   end
 
+  # The bottle-build matrix must never install/bottle a bare path
+  # formula (`./ferrite.rb`): a path-based formula has no tap identity,
+  # so `brew bottle --json`'s embedded `formula.path` is a raw,
+  # runner-specific filesystem path instead of a stable tap-relative
+  # one, which is exactly what makes the collect job's JSON
+  # normalization necessary in the first place. Every bottle-job
+  # Homebrew invocation must instead be tap-qualified under the same
+  # deterministic `ferritelabs/ci` name used everywhere else in this
+  # workflow and in ci.yml.
+  def test_build_bottles_bottle_job_uses_tap_qualified_formula_never_a_path
+    doc = load_yaml(BUILD_BOTTLES)
+    bottle_steps = doc.dig("jobs", "bottle", "steps") || []
+    run_scripts = bottle_steps.select { |step| step.is_a?(Hash) && step["run"] }.map { |step| step["run"] }
+
+    tap_step = bottle_steps.find { |step| step.is_a?(Hash) && step["run"].to_s.include?("brew tap ferritelabs/ci") }
+    refute_nil tap_step, "bottle job must tap the checkout under the deterministic ferritelabs/ci name"
+
+    build_step = run_scripts.find { |run| run.include?("brew install --build-bottle") }
+    refute_nil build_step, "bottle job must build a bottle with brew install --build-bottle"
+    assert_match(/brew install --build-bottle ferritelabs\/ci\/ferrite\b/, build_step,
+                 "bottle job must install the tap-qualified formula, never a path formula")
+    refute_match(%r{brew install --build-bottle \./?ferrite\.rb}, build_step,
+                 "bottle job must never install a path formula (./ferrite.rb)")
+
+    assert_match(/brew bottle --json.*ferritelabs\/ci\/ferrite\b/, build_step,
+                 "bottle job must run brew bottle --json against the tap-qualified formula")
+    refute_match(%r{brew bottle --json[^\n]*\./?ferrite\.rb}, build_step,
+                 "bottle job must never run brew bottle --json against a path formula (./ferrite.rb)")
+
+    tap_step_index = bottle_steps.index(tap_step)
+    build_step_index = bottle_steps.index { |step| step.is_a?(Hash) && step["run"] == build_step }
+    assert tap_step_index < build_step_index,
+           "the checkout must be tapped before it is installed/bottled"
+  end
+
   # The matrix must build genuinely distinct, currently-supported bottle
   # platforms - not duplicate/retired runner+arch combinations that
   # silently produce the same (or a wrong) `brew bottle` tag.
