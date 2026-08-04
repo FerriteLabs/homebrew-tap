@@ -213,3 +213,58 @@ resulting state and are recorded here for traceability:
   afterwards (`brew uninstall ferrite`, `brew untap`) to restore disk
   headroom. This is noted as a property of this shared sandbox, not of
   the formula.
+
+## Verification Addendum (Bash 3.2 / bottle-matrix / version-truth / test-hygiene pass)
+
+Following the bottle-matrix, version-truth, formula-test-cleanup, and
+checksum fail-closed changes described above, the following checks were
+run against the resulting state:
+
+- `tests/run.sh --fast` and `tests/run.sh` (full, network-enabled): both
+  pass under `/bin/bash` (macOS system Bash 3.2, no `mapfile`/
+  `readarray`/associative arrays) and under a modern Bash 5.x - 3 test
+  files, 22 runs, 109 assertions, 0 failures, 0 errors, 0 skips in every
+  combination.
+- `ruby -c ferrite.rb` and `ruby -c tests/*.rb`: syntax OK.
+- `actionlint` on every workflow file (`ci.yml`, `update-formula.yml`,
+  `build-bottles.yml`, `dependabot-auto-merge.yml`): no findings.
+- `brew audit --strict --online` (via a locally trusted tap): 1 finding,
+  the same intentionally-retained `post_install` finding documented
+  above and in `VERIFICATION_REPORT.md`. Fixed one new finding this pass
+  introduced: the readiness-poll's `system(...)` call originally passed
+  `"#{bin}/ferrite-cli"` as a literal interpolated string where
+  `brew audit` correctly prefers the idiomatic `bin/"ferrite-cli"`
+  Pathname helper; corrected and re-verified clean.
+- `brew style` on the formula: 1 offense (the same intentional
+  `post_install` finding).
+- Manually verified fail-closed behavior end-to-end rather than relying
+  on code review alone: pointed the formula's `url` at a non-resolving
+  host and confirmed `tests/formula_checksum_test.rb` now reports
+  `1 errors, 0 skips` (previously it would have reported a silent
+  skip); ran the extracted `build-bottles.yml` formula/metadata/
+  version-agreement Ruby check against the real repo state (passes)
+  and against a deliberately mismatched requested version and a
+  corrupted `release-metadata.json` sha256 (both correctly fail
+  closed with `::error::`); ran the extracted checksum-recompute step
+  against the real network and confirmed it matches the real v0.4.0
+  tarball.
+- Source install/test were **not** re-run end-to-end in this session:
+  the `install` method (and therefore bottle-relevant install
+  semantics) is unchanged from the prior verified pass recorded above;
+  only the `test do` block's readiness-polling/cleanup structure
+  changed. Per the pragmatic scope for this pass, the prior successful
+  `brew install --build-from-source`/`brew test` verification is
+  retained rather than re-run (a ~15+ minute Rust build with no
+  bearing on the polling-pattern change actually made). The new
+  polling pattern's runtime behavior (quiet `system(...)` not raising
+  on a not-yet-ready server, `ensure` always reaping `server_pid`) was
+  instead verified directly with a standalone Ruby reproduction of the
+  same fork/poll/ensure shape against a command that never becomes
+  ready, confirming no leaked process and no raised exception escaping
+  the `begin`/`ensure`.
+- Environment note: this sandbox disables `brew audit [path]`/
+  `brew install [path]` the same way the prior verification pass
+  found; validation again worked around this via
+  `brew tap ferritelabs/homebrew-tap "$(pwd)"` +
+  `brew trust --formula ferritelabs/tap/ferrite`, and both were
+  reverted (`brew untrust`, `brew untap`) after verification completed.

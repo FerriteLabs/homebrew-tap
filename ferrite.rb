@@ -126,7 +126,7 @@ class Ferrite < Formula
       # very first retry instead of giving the server a chance to start.
       ready = false
       10.times do
-        ready = system("#{bin}/ferrite-cli", "-p", port.to_s, "PING", out: File::NULL, err: File::NULL)
+        ready = system(bin/"ferrite-cli", "-p", port.to_s, "PING", out: File::NULL, err: File::NULL)
         break if ready
 
         sleep 1
