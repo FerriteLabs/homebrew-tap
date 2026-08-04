@@ -7,6 +7,9 @@
 # release tarball. Pass --fast (or set FERRITE_TAP_SKIP_NETWORK=1) for a
 # quick offline run that skips network-bound assertions.
 #
+# Written to run under macOS's system /bin/bash (3.2, no mapfile/
+# readarray/associative arrays) as well as any modern Bash.
+#
 # Usage:
 #   tests/run.sh            # full suite (network required)
 #   tests/run.sh --fast      # offline-friendly, skips network checks
@@ -38,7 +41,13 @@ fi
 
 cd "${REPO_ROOT}"
 
-mapfile -t test_files < <(find tests -maxdepth 1 -name "*_test.rb" | sort)
+# Bash 3.2 (macOS's default /bin/bash) has no mapfile/readarray builtin,
+# so test files are collected into an indexed array one line at a time
+# via a `while read` loop over process substitution instead.
+test_files=()
+while IFS= read -r test_file; do
+  test_files+=("${test_file}")
+done < <(find tests -maxdepth 1 -name "*_test.rb" | sort)
 
 if [ "${#test_files[@]}" -eq 0 ]; then
   echo "error: no test files found under tests/" >&2
