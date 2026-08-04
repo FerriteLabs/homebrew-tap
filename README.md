@@ -111,10 +111,14 @@ To create your own tap:
 
 When releasing a new version:
 
-1. Update the `url` with the new version tag
-2. Update the `sha256` hash
-3. Test the formula: `brew install --build-from-source ferrite.rb`
-4. Submit a PR or push to your tap
+1. Run `update-formula.yml` with the release version (and optional advisory
+   checksum)
+2. Review and merge the generated formula-update pull request
+3. Run `build-bottles.yml` for the merged version
+4. Review and merge the generated bottle-metadata pull request
+
+Both workflows validate their inputs and keep formula changes in the normal
+pull-request review flow.
 
 ## Submitting to homebrew-core
 
@@ -197,5 +201,4 @@ brew reinstall openssl@3
 export OPENSSL_DIR=$(brew --prefix openssl@3)
 brew install --build-from-source ferrite
 ```
-
 

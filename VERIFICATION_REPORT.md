@@ -5,6 +5,42 @@ change was made; no unrelated changes existed to preserve. No push, merge,
 or history rewrite was performed - all work is local commits on the
 existing branch.
 
+## Review follow-up verification (2026-08-04)
+
+Commits `6301779` and `eeeecc5` resolve the two subsequent review findings
+without changing the pull-request review flow:
+
+- `scripts/update_formula.rb` now removes any existing bottle block before
+  updating source URL/SHA, validates the result, and atomically replaces each
+  output file. Regression tests prove old rebuild metadata, root URLs, and
+  checksums do not survive.
+- Bottle collection validates the exact four-platform JSON/tarball set and
+  each manifest's version/tag/root URL/checksum, refuses formulas containing
+  prior bottle metadata, merges without preserving old entries, and verifies
+  the written formula exactly matches the new validated set. Because a local
+  tap is a Homebrew-managed clone, collection explicitly copies that merged
+  formula back to the Actions checkout before PR creation.
+- `ci.yml` and `build-bottles.yml` tap the checkout under the deterministic
+  `ferritelabs/ci` name and run:
+  `brew audit --strict --online ferritelabs/ci/ferrite` and
+  `brew style ferritelabs/ci/ferrite`. Static tests prohibit path-based audit.
+
+Verification:
+
+- `/bin/bash tests/run.sh --fast` and GNU Bash 5.3 equivalent: 46 tests,
+  335 assertions, 0 failures/errors, 2 intentional skips.
+- `/bin/bash tests/run.sh` and GNU Bash 5.3 equivalent: 46 tests,
+  338 assertions, 0 failures/errors, 1 intentional absent-bottle skip.
+- Ruby syntax passed for the formula, updater, and all tests/helpers.
+- `actionlint .github/workflows/*.yml`: no findings.
+- The exact tapped audit/style commands above were run locally. Both returned
+  only the intentionally retained `post_install` directory-creation finding.
+- The real multi-platform bottle merge still requires GitHub-hosted runners;
+  no substitute bottle artifacts were fabricated locally.
+
+This section supersedes the older test counts and Homebrew invocation details
+in the historical seven-requirement record below.
+
 ## Commits (one per requirement ID, conventional commit format)
 
 | ID | Commit | Type/scope | Summary |

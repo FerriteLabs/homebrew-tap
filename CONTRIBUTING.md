@@ -19,9 +19,11 @@ Thank you for your interest in contributing! This repository contains the Homebr
 1. Fork the repository
 2. Create a feature branch (`git checkout -b fix/my-change`)
 3. Make your changes to `ferrite.rb`
-4. Test locally: `brew install --build-from-source ./ferrite.rb`
-5. Run audit: `brew audit --strict ferrite.rb`
-6. Commit with a clear message and open a Pull Request
+4. Tap the checkout locally: `brew tap ferritelabs/ci "$(pwd)"`
+5. Run `brew audit --strict --online ferritelabs/ci/ferrite` and
+   `brew style ferritelabs/ci/ferrite`
+6. Test locally: `brew install --build-from-source ferritelabs/ci/ferrite`
+7. Commit with a clear message and open a Pull Request
 
 ## Formula Guidelines
 

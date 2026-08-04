@@ -17,17 +17,22 @@ cd homebrew-tap
 ## Test the Formula Locally
 
 ```bash
-# Audit the formula for issues
-brew audit --strict ferrite.rb
+# Tap this checkout under the same deterministic name CI uses
+brew tap ferritelabs/ci "$(pwd)"
 
-# Install from local formula
-brew install --build-from-source ./ferrite.rb
+# Audit and style the tap-qualified formula
+brew audit --strict --online ferritelabs/ci/ferrite
+brew style ferritelabs/ci/ferrite
+
+# Install from the local tap
+brew install --build-from-source ferritelabs/ci/ferrite
 
 # Run the built-in test
-brew test ferrite
+brew test ferritelabs/ci/ferrite
 
-# Uninstall
-brew uninstall ferrite
+# Uninstall and remove the local tap
+brew uninstall ferritelabs/ci/ferrite
+brew untap ferritelabs/ci
 ```
 
 ## What to Work On
@@ -50,7 +55,7 @@ The formula in `ferrite.rb` handles:
 
 1. Create a feature branch: `git checkout -b my-change`
 2. Make your changes to `ferrite.rb`
-3. Test with `brew audit --strict ferrite.rb && brew install --build-from-source ./ferrite.rb`
+3. Tap the checkout and run the audit/style/install commands above
 4. Commit using [Conventional Commits](https://www.conventionalcommits.org/)
 5. Push and open a PR
 
