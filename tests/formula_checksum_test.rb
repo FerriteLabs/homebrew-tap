@@ -11,7 +11,16 @@ require "uri"
 # from a tampered or mismatched download) so it is exercised against the
 # real network by default.
 #
-# Skippable for fast/offline runs via:
+# This test intentionally does NOT rescue network errors into a skip.
+# A network failure during a full/default run (e.g. the CI `audit` job
+# in ci.yml, which runs on a network-enabled runner specifically to
+# exercise this check) must FAIL the suite, not silently pass as a
+# skip - otherwise a flaky or blocked network would let a real checksum
+# mismatch slip through undetected. The ONLY sanctioned way to skip
+# this test is the explicit fast/offline opt-in below; there is no
+# implicit "environment looked offline, so skip" fallback.
+#
+# Skippable ONLY for explicit fast/offline runs via:
 #   tests/run.sh --fast
 #   FERRITE_TAP_SKIP_NETWORK=1 ruby tests/formula_checksum_test.rb
 class FormulaChecksumTest < Minitest::Test
@@ -36,8 +45,6 @@ class FormulaChecksumTest < Minitest::Test
     digest = download_and_digest(url)
     assert_equal expected_sha256, digest,
                  "sha256 in ferrite.rb does not match the downloaded tarball at #{url}"
-  rescue SocketError, Errno::ECONNREFUSED, Errno::ETIMEDOUT, Net::OpenTimeout, Net::ReadTimeout => e
-    skip "network unavailable in this environment (#{e.class}: #{e.message})"
   end
 
   private

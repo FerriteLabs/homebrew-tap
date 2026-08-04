@@ -18,6 +18,8 @@ require "yaml"
 class WorkflowBehaviorTest < Minitest::Test
   UPDATE_FORMULA = FerriteTap::WORKFLOWS_DIR + "update-formula.yml"
   BUILD_BOTTLES = FerriteTap::WORKFLOWS_DIR + "build-bottles.yml"
+  CI_WORKFLOW = FerriteTap::WORKFLOWS_DIR + "ci.yml"
+  CHECKSUM_TEST = FerriteTap::ROOT + "tests" + "formula_checksum_test.rb"
 
   def test_workflow_files_exist
     assert UPDATE_FORMULA.file?
@@ -96,6 +98,39 @@ class WorkflowBehaviorTest < Minitest::Test
 
   def test_build_bottles_runs_tests_before_opening_a_pr
     assert_tests_run_before_pr(BUILD_BOTTLES)
+  end
+
+  # The ci.yml `audit` job is the one job that runs on a network-enabled
+  # runner specifically to exercise the real tarball checksum check; it
+  # must run the *full* suite (no --fast / FERRITE_TAP_SKIP_NETWORK=1),
+  # or the checksum test would never actually execute anywhere in CI.
+  def test_ci_audit_job_runs_the_full_network_enabled_test_suite
+    doc = load_yaml(CI_WORKFLOW)
+    audit_job = doc.dig("jobs", "audit")
+    refute_nil audit_job, "ci.yml must define an audit job"
+
+    full_suite_step = (audit_job["steps"] || []).find do |step|
+      step.is_a?(Hash) && step["run"].to_s.include?("tests/run.sh")
+    end
+    refute_nil full_suite_step, "audit job must run tests/run.sh"
+
+    run_script = full_suite_step["run"].to_s
+    refute_match(/tests\/run\.sh\s+--fast/, run_script,
+                 "the audit job must run the full suite, not --fast, or the network-bound checksum test never actually runs in CI")
+    refute_match(/FERRITE_TAP_SKIP_NETWORK/, run_script,
+                 "the audit job must not opt out of the network-bound checksum test")
+  end
+
+  # Guards against reintroducing a broad rescue that silently turns a
+  # real network failure into a passing skip during a full/default run.
+  # The only sanctioned skip path is the explicit FERRITE_TAP_SKIP_NETWORK
+  # / --fast opt-in checked at the very top of the test method.
+  def test_checksum_test_only_skips_via_explicit_fast_offline_opt_in
+    source = CHECKSUM_TEST.read
+    refute_match(/rescue\s+.*\n\s*skip\b/, source,
+                 "the checksum test must not rescue network errors into a skip; a network failure during a full/default run must fail the test, not pass silently")
+    assert_match(/skip\b.*if\s+FerriteTap\.skip_network\?/, source,
+                 "the only sanctioned skip must be gated behind the explicit fast/offline opt-in")
   end
 
   private
