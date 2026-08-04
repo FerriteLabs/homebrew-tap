@@ -1,0 +1,7 @@
+{
+  "version": "0.4.0",
+  "sha256": "b4db8cc8eb0d3c2cef4a019a47d550c347df69fb8a4f77550c814fae463005cf",
+  "url": "https://github.com/ferritelabs/ferrite/archive/refs/tags/v0.4.0.tar.gz",
+  "updated_at": "2026-08-04T05:14:31Z",
+  "updated_by": "manual (initial canonical metadata; subsequent updates are written atomically alongside ferrite.rb by update-formula.yml)"
+}

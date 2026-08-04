@@ -6,11 +6,11 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Ferrite version (e.g. 0.1.0)'
+        description: "Ferrite version (e.g. 0.4.0)"
         required: true
       sha256:
-        description: 'SHA256 of the release tarball'
-        required: true
+        description: "Advisory SHA256 of the release tarball (verified, never trusted blindly - the workflow always (re)computes the canonical checksum itself and fails if this does not match)"
+        required: false
 
 jobs:
   update:
@@ -22,38 +22,128 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set version and SHA
+      # Untrusted event data (repository_dispatch client_payload or
+      # workflow_dispatch inputs) is passed through `env:` and never
+      # interpolated with `${{ }}` directly into a `run:` script body, so
+      # a malicious payload cannot inject shell syntax.
+      - name: Resolve release inputs
         id: release
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_VERSION: ${{ github.event.client_payload.version }}
+          DISPATCH_SHA256: ${{ github.event.client_payload.sha256 }}
+          WORKFLOW_VERSION: ${{ inputs.version }}
+          WORKFLOW_SHA256: ${{ inputs.sha256 }}
         run: |
-          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-            echo "version=${{ github.event.client_payload.version }}" >> "$GITHUB_OUTPUT"
-            echo "sha256=${{ github.event.client_payload.sha256 }}" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          if [ "${EVENT_NAME}" = "repository_dispatch" ]; then
+            VERSION="${DISPATCH_VERSION}"
+            SUPPLIED_SHA256="${DISPATCH_SHA256}"
           else
-            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
-            echo "sha256=${{ inputs.sha256 }}" >> "$GITHUB_OUTPUT"
+            VERSION="${WORKFLOW_VERSION}"
+            SUPPLIED_SHA256="${WORKFLOW_SHA256}"
           fi
 
-      - name: Update formula
+          if [ -z "${VERSION}" ]; then
+            echo "::error::No version supplied by the triggering event"
+            exit 1
+          fi
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "supplied_sha256=${SUPPLIED_SHA256}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate strict SemVer version
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
-          VERSION="${{ steps.release.outputs.version }}"
-          SHA256="${{ steps.release.outputs.sha256 }}"
-          
-          # Update URL
-          sed -i "s|url \".*\"|url \"https://github.com/ferritelabs/ferrite/archive/refs/tags/v${VERSION}.tar.gz\"|" ferrite.rb
-          
-          # Update only the source tarball SHA256 (first occurrence, not bottle checksums)
-          # The source sha256 is the one NOT inside the bottle block (no cellar: prefix)
-          awk -v sha="$SHA256" '
-            /sha256 "/ && !done && !/cellar:/ {
-              sub(/sha256 ".*"/, "sha256 \"" sha "\"")
-              done = 1
+          set -euo pipefail
+          # Strict SemVer 2.0.0 core + optional pre-release/build metadata,
+          # without a leading "v" (the "v" prefix is only used in tag/url
+          # construction, never in the version value itself).
+          SEMVER_REGEX="^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$"
+          if ! [[ "${VERSION}" =~ ${SEMVER_REGEX} ]]; then
+            echo "::error::\"${VERSION}\" is not a valid strict SemVer version (expected e.g. 1.2.3)"
+            exit 1
+          fi
+          echo "Version ${VERSION} is valid SemVer"
+
+      # The canonical checksum is *always* recomputed from the real
+      # tagged archive. A caller-supplied sha256 (from workflow_dispatch
+      # or repository_dispatch) is only ever used as an advisory
+      # cross-check; it is never written to the formula directly.
+      - name: Compute canonical archive checksum
+        id: checksum
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          SUPPLIED_SHA256: ${{ steps.release.outputs.supplied_sha256 }}
+        run: |
+          set -euo pipefail
+          ARCHIVE_URL="https://github.com/ferritelabs/ferrite/archive/refs/tags/v${VERSION}.tar.gz"
+          echo "Downloading canonical tagged archive: ${ARCHIVE_URL}"
+
+          COMPUTED_SHA256="$(curl -sSL --fail "${ARCHIVE_URL}" | sha256sum | awk "{print \$1}")"
+          if [ -z "${COMPUTED_SHA256}" ]; then
+            echo "::error::Failed to download or hash ${ARCHIVE_URL}"
+            exit 1
+          fi
+          echo "Computed canonical sha256: ${COMPUTED_SHA256}"
+
+          if [ -n "${SUPPLIED_SHA256}" ] && [ "${SUPPLIED_SHA256}" != "${COMPUTED_SHA256}" ]; then
+            echo "::error::Supplied sha256 (${SUPPLIED_SHA256}) does not match the computed canonical checksum (${COMPUTED_SHA256}) for ${ARCHIVE_URL}. Refusing to trust the supplied value; the tarball may have changed or the input may be wrong."
+            exit 1
+          fi
+
+          echo "sha256=${COMPUTED_SHA256}" >> "$GITHUB_OUTPUT"
+          echo "url=${ARCHIVE_URL}" >> "$GITHUB_OUTPUT"
+
+      # ferrite.rb and release-metadata.json are updated together from
+      # the same validated in-memory values so they can never disagree;
+      # both writes only happen after every substitution is verified to
+      # have taken effect, so a partial/half-updated pair is never
+      # committed by this step.
+      - name: Update formula and canonical metadata atomically
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          SHA256: ${{ steps.checksum.outputs.sha256 }}
+          ARCHIVE_URL: ${{ steps.checksum.outputs.url }}
+        run: |
+          set -euo pipefail
+          ruby -e "
+            require \"json\"
+            require \"time\"
+
+            version = ENV.fetch(\"VERSION\")
+            sha256 = ENV.fetch(\"SHA256\")
+            archive_url = ENV.fetch(\"ARCHIVE_URL\")
+
+            formula_path = \"ferrite.rb\"
+            metadata_path = \"release-metadata.json\"
+
+            formula = File.read(formula_path)
+            new_formula = formula.sub(/^(\s*url\s+)\"[^\"]+\"/) { \"#{Regexp.last_match(1)}\\\"#{archive_url}\\\"\" }
+            raise \"failed to update url in #{formula_path}\" if new_formula == formula
+
+            newer_formula = new_formula.sub(/^(\s*sha256\s+)\"[^\"]+\"/) { \"#{Regexp.last_match(1)}\\\"#{sha256}\\\"\" }
+            raise \"failed to update source sha256 in #{formula_path}\" if newer_formula == new_formula
+
+            metadata = {
+              \"version\" => version,
+              \"sha256\" => sha256,
+              \"url\" => archive_url,
+              \"updated_at\" => Time.now.utc.iso8601,
+              \"updated_by\" => \"update-formula.yml\",
             }
-            { print }
-          ' ferrite.rb > ferrite.rb.tmp && mv ferrite.rb.tmp ferrite.rb
-          
-          # Note: Bottle checksums are updated separately by the build-bottles workflow
-          echo "Updated source SHA256 to ${SHA256}"
-          echo "Bottle checksums will be updated when bottles are built"
+
+            File.write(formula_path, newer_formula)
+            File.write(metadata_path, JSON.pretty_generate(metadata) + \"\n\")
+            puts \"Updated #{formula_path} and #{metadata_path} to v#{version} (#{sha256})\"
+          "
+
+      - name: Run formula syntax check and fast test suite
+        run: |
+          set -euo pipefail
+          ruby -c ferrite.rb
+          bash tests/run.sh --fast
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v6
@@ -62,6 +152,8 @@ jobs:
           title: "chore: bump ferrite to v${{ steps.release.outputs.version }}"
           body: |
             Automated formula update for Ferrite v${{ steps.release.outputs.version }}.
-            SHA256: `${{ steps.release.outputs.sha256 }}`
+
+            Canonical SHA256 (recomputed from the tagged archive, not trusted
+            from the triggering event): `${{ steps.checksum.outputs.sha256 }}`
           branch: update-ferrite-${{ steps.release.outputs.version }}
           base: main
