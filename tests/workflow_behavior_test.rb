@@ -246,8 +246,37 @@ class WorkflowBehaviorTest < Minitest::Test
 
   def assert_has_semver_validation(path)
     source = path.read
-    assert_match(/\^\[0-9\]\+\\?\.\[0-9\]\+\\?\.\[0-9\]\+|semver/i, source,
-                 "workflow must validate the version input as strict SemVer")
+    regex_match = source.match(/SEMVER_REGEX="([^"]+)"/)
+    refute_nil regex_match, "workflow must define a SemVer validation regex"
+
+    semver = Regexp.new(regex_match[1])
+    %w[
+      0.0.0
+      1.2.3
+      1.2.3-alpha
+      1.2.3-alpha.1
+      1.2.3-0.3.7
+      1.2.3-x.7.z.92
+      1.2.3+build.5
+      1.2.3-alpha+build.5
+    ].each do |version|
+      assert_match semver, version, "#{path.basename} should accept valid SemVer #{version.inspect}"
+    end
+
+    %w[
+      v1.2.3
+      01.2.3
+      1.02.3
+      1.2.03
+      1.2
+      1.2.3-01
+      1.2.3-alpha..1
+      1.2.3-alpha.
+      1.2.3+
+      1.2.3+build..1
+    ].each do |version|
+      refute_match semver, version, "#{path.basename} should reject invalid SemVer #{version.inspect}"
+    end
   end
 
   def assert_tests_run_before_pr(path)

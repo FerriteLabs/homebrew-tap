@@ -168,14 +168,18 @@ class FormulaStructureTest < Minitest::Test
     refute_nil test_match, "test do block must be present"
 
     body = test_match[1]
-    ensure_match = body.match(/^\s*ensure\s*$(.*?)\n\s*end\n\s*end\n\z/m)
-    refute_nil ensure_match, "test block must have an ensure clause"
+    ensure_index = body.index(/^\s*ensure\s*$/)
+    refute_nil ensure_index, "test block must have an ensure clause"
+    ensure_body = body[ensure_index..]
 
-    ensure_body = ensure_match[1]
     assert_match(/Process\.kill\("TERM",\s*server_pid\)/, ensure_body,
                  "ensure clause must terminate the exact forked server_pid")
     assert_match(/Process\.wait\(server_pid\)/, ensure_body,
                  "ensure clause must reap the exact forked server_pid to avoid a zombie process")
+    assert_match(/rescue\s+Errno::ESRCH/, ensure_body,
+                 "cleanup must tolerate a server that exited before TERM is sent")
+    assert_match(/rescue\s+Errno::ESRCH.*?ensure.*?Process\.wait\(server_pid\)/m, ensure_body,
+                 "reaping must run from an inner ensure even when terminating the child raises")
   end
 
   def test_install_defines_forge_feature_toggle

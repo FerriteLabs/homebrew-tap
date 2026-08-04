@@ -49,7 +49,10 @@ jobs:
           VERSION: ${{ steps.resolve.outputs.version }}
         run: |
           set -euo pipefail
-          SEMVER_REGEX="^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$"
+          # SemVer 2.0.0: numeric core identifiers cannot have leading
+          # zeroes, numeric pre-release identifiers cannot have leading
+          # zeroes, and every dot-separated identifier must be non-empty.
+          SEMVER_REGEX="^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$"
           if ! [[ "${VERSION}" =~ ${SEMVER_REGEX} ]]; then
             echo "::error::\"${VERSION}\" is not a valid strict SemVer version (expected e.g. 1.2.3)"
             exit 1
@@ -77,9 +80,11 @@ jobs:
             abort "::error::could not find a top-level url stanza in ferrite.rb" unless url_match
             formula_url = url_match[1]
 
-            formula_version_match = formula_url.match(%r{archive/refs/tags/v(\d+\.\d+\.\d+)\.tar\.gz\z})
+            formula_version_match = formula_url.match(
+              %r{\Ahttps://github\.com/ferritelabs/ferrite/archive/refs/tags/v(.+)\.tar\.gz\z},
+            )
             unless formula_version_match
-              abort "::error::ferrite.rb url is not a vX.Y.Z tag archive: #{formula_url}"
+              abort "::error::ferrite.rb url is not the canonical Ferrite version-tag archive: #{formula_url}"
             end
             formula_version = formula_version_match[1]
 

@@ -146,8 +146,13 @@ class Ferrite < Formula
       output = shell_output("#{bin}/ferrite-cli -p #{port} DBSIZE")
       assert_match "1", output
     ensure
-      Process.kill("TERM", server_pid)
-      Process.wait(server_pid)
+      begin
+        Process.kill("TERM", server_pid)
+      rescue Errno::ESRCH
+        # The child already exited; it still needs to be reaped below.
+      ensure
+        Process.wait(server_pid)
+      end
     end
   end
 end

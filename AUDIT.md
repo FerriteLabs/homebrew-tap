@@ -99,8 +99,10 @@ dependency-free test suite (`tests/run.sh`) unless noted otherwise:
 - `tests/run.sh` runs under macOS's system `/bin/bash` (3.2, no
   `mapfile`/`readarray`/associative arrays) as well as any modern Bash.
 
-One `brew audit --strict` finding (`post_install` creating directories) and
-two `brew style` `Sorbet/*Sigil` offenses are intentionally retained; see the
+The canonical tapped checks retain one shared `brew audit --strict` /
+`brew style` finding (`post_install` creating directories). Direct
+path-based `brew style ./ferrite.rb` additionally reports two
+`Sorbet/*Sigil` convention offenses. All three are intentional; see the
 Verification Addendum below and `VERIFICATION_REPORT.md` for the reasoning.
 
 ## Ordered Workflow Sequence (release-to-install path, current)
@@ -222,9 +224,11 @@ run against the resulting state:
 
 - `tests/run.sh --fast` and `tests/run.sh` (full, network-enabled): both
   pass under `/bin/bash` (macOS system Bash 3.2, no `mapfile`/
-  `readarray`/associative arrays) and under a modern Bash 5.x - 3 test
-  files, 22 runs, 109 assertions, 0 failures, 0 errors, 0 skips in every
-  combination.
+  `readarray`/associative arrays) and under a modern Bash 5.x. The fast
+  runs execute 40 tests / 264 assertions with two intentional skips
+  (network checksum and absent bottle block); the full runs execute
+  40 tests / 267 assertions with one intentional skip (absent bottle
+  block). All four combinations report 0 failures and 0 errors.
 - `ruby -c ferrite.rb` and `ruby -c tests/*.rb`: syntax OK.
 - `actionlint` on every workflow file (`ci.yml`, `update-formula.yml`,
   `build-bottles.yml`, `dependabot-auto-merge.yml`): no findings.
@@ -235,8 +239,10 @@ run against the resulting state:
   `"#{bin}/ferrite-cli"` as a literal interpolated string where
   `brew audit` correctly prefers the idiomatic `bin/"ferrite-cli"`
   Pathname helper; corrected and re-verified clean.
-- `brew style` on the formula: 1 offense (the same intentional
-  `post_install` finding).
+- `brew style ferritelabs/tap/ferrite` (the canonical tapped-formula
+  invocation): 1 offense, the same intentional `post_install` finding.
+  Direct path mode (`brew style ./ferrite.rb`) additionally reports the
+  two `Sorbet/*Sigil` convention offenses documented above.
 - Manually verified fail-closed behavior end-to-end rather than relying
   on code review alone: pointed the formula's `url` at a non-resolving
   host and confirmed `tests/formula_checksum_test.rb` now reports
