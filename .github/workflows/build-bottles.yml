@@ -4,15 +4,61 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Ferrite version (e.g., 0.1.0)'
+        description: "Ferrite version (e.g., 0.4.0)"
         required: true
         type: string
   repository_dispatch:
     types: [new-release]
 
 jobs:
+  validate:
+    name: Validate release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      # Untrusted event data is passed through env: and never
+      # interpolated with the double-brace expression syntax directly
+      # into a run: shell body, matching the hardening applied to
+      # update-formula.yml.
+      - name: Resolve version from triggering event
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_VERSION: ${{ github.event.client_payload.version }}
+          WORKFLOW_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" = "repository_dispatch" ]; then
+            VERSION="${DISPATCH_VERSION}"
+          else
+            VERSION="${WORKFLOW_VERSION}"
+          fi
+
+          if [ -z "${VERSION}" ]; then
+            echo "::error::No version supplied by the triggering event"
+            exit 1
+          fi
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate strict SemVer version
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          SEMVER_REGEX="^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$"
+          if ! [[ "${VERSION}" =~ ${SEMVER_REGEX} ]]; then
+            echo "::error::\"${VERSION}\" is not a valid strict SemVer version (expected e.g. 1.2.3)"
+            exit 1
+          fi
+          echo "Version ${VERSION} is valid SemVer"
+
   bottle:
+    name: Build bottle (${{ matrix.arch }})
+    needs: validate
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: macos-14
@@ -38,11 +84,14 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build bottle
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
         run: |
+          set -euo pipefail
           brew install --build-bottle ./ferrite.rb
-          brew bottle --json --root-url="https://github.com/ferritelabs/homebrew-tap/releases/download/v${{ inputs.version || github.event.client_payload.version }}" ./ferrite.rb
+          brew bottle --json --root-url="https://github.com/ferritelabs/homebrew-tap/releases/download/v${VERSION}" ./ferrite.rb
 
-      - name: Upload bottle
+      - name: Upload bottle artifacts
         uses: actions/upload-artifact@v4
         with:
           name: bottle-${{ matrix.arch }}
@@ -51,12 +100,17 @@ jobs:
             ferrite--*.bottle.json
 
   collect:
-    needs: bottle
+    name: Merge bottles and open pull request
+    needs: [validate, bottle]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
 
     steps:
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@v1
+
       - name: Checkout tap
         uses: actions/checkout@v4
 
@@ -65,80 +119,59 @@ jobs:
         with:
           merge-multiple: true
 
-      - name: Merge bottle JSON and update formula
+      - name: Validate expected bottle artifacts were produced
         run: |
-          # Merge all bottle JSON files
-          python3 -c "
-          import json, glob
-          bottles = {}
-          for f in glob.glob('ferrite--*.bottle.json'):
-              with open(f) as fh:
-                  data = json.load(fh)
-                  for formula, info in data.items():
-                      if formula not in bottles:
-                          bottles[formula] = info
-                      else:
-                          bottles[formula]['bottle']['tags'].update(info['bottle']['tags'])
-          print(json.dumps(bottles, indent=2))
-          " > merged-bottles.json
-          echo "Merged bottle JSON:"
-          cat merged-bottles.json
-
-      - name: Update formula with bottle checksums
-        run: |
-          python3 << 'PYEOF'
-          import json, re
-
-          with open("merged-bottles.json") as f:
-              data = json.load(f)
-
-          # Extract bottle tags (platform -> sha256)
-          checksums = {}
-          for formula, info in data.items():
-              for tag, tag_info in info.get("bottle", {}).get("tags", {}).items():
-                  checksums[tag] = tag_info.get("sha256", "")
-
-          # Map platform names to formula identifiers
-          platform_map = {
-              "arm64_sonoma": "arm64_sonoma",
-              "arm64_ventura": "arm64_ventura",
-              "arm64_sequoia": "arm64_sequoia",
-              "sonoma": "sonoma",
-              "ventura": "ventura",
-              "x86_64_linux": "x86_64_linux",
-          }
-
-          with open("ferrite.rb") as f:
-              formula = f.read()
-
-          for platform, identifier in platform_map.items():
-              if platform in checksums and checksums[platform]:
-                  pattern = rf'(sha256 cellar: :any_skip_relocation, {re.escape(identifier)}:\s+)"[a-f0-9]+"'
-                  replacement = rf'\1"{checksums[platform]}"'
-                  formula = re.sub(pattern, replacement, formula)
-
-          with open("ferrite.rb", "w") as f:
-              f.write(formula)
-
-          print(f"Updated {len(checksums)} bottle checksums in ferrite.rb")
-          PYEOF
-
-      - name: Commit formula update
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add ferrite.rb
-          if git diff --cached --quiet; then
-            echo "No bottle checksum changes to commit"
-          else
-            git commit -m "chore: update bottle checksums for v${{ inputs.version || github.event.client_payload.version }}"
-            git push
+          set -euo pipefail
+          EXPECTED_COUNT=5
+          ACTUAL_COUNT="$(find . -maxdepth 1 -name "ferrite--*.bottle.json" | wc -l | tr -d "[:space:]")"
+          if [ "${ACTUAL_COUNT}" -ne "${EXPECTED_COUNT}" ]; then
+            echo "::error::Expected ${EXPECTED_COUNT} bottle JSON artifacts (one per matrix platform) but found ${ACTUAL_COUNT}. Refusing to merge a partial bottle set."
+            exit 1
           fi
+          echo "Found all ${ACTUAL_COUNT} expected bottle artifacts"
+
+      # Canonical Homebrew merge: brew bottle --merge reads the
+      # per-platform JSON manifests and writes (or inserts, if none
+      # exists yet) a single bottle do ... end block into the formula
+      # file itself. This replaces the previous hand-rolled
+      # regex/placeholder-substitution approach, which only worked when
+      # a bottle block with matching platform keys already existed.
+      - name: Merge bottle metadata into the formula
+        run: |
+          set -euo pipefail
+          brew tap ferritelabs/homebrew-tap "$(pwd)"
+          brew bottle --merge --write --no-commit ferrite--*.bottle.json
+          echo "Merged bottle metadata:"
+          sed -n "/bottle do/,/^  end/p" ferrite.rb
+
+      - name: Run formula syntax check and fast test suite
+        run: |
+          set -euo pipefail
+          ruby -c ferrite.rb
+          bash tests/run.sh --fast
+
+      - name: Run brew audit on the updated formula
+        run: brew audit --strict --online ./ferrite.rb
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "chore: add bottle checksums for v${{ needs.validate.outputs.version }}"
+          title: "chore: add bottle checksums for v${{ needs.validate.outputs.version }}"
+          body: |
+            Automated bottle metadata update for Ferrite v${{ needs.validate.outputs.version }}.
+
+            Generated by `brew bottle --merge` from the per-platform bottle
+            manifests built in this workflow run. No direct push to main is
+            made; this pull request goes through normal CI and review like
+            any other formula change.
+          branch: update-ferrite-bottles-${{ needs.validate.outputs.version }}
+          base: main
 
       - name: Create release with bottles
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ inputs.version || github.event.client_payload.version }}
+          tag_name: v${{ needs.validate.outputs.version }}
           files: ferrite--*.bottle.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
