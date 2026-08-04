@@ -87,3 +87,52 @@ cost/risk of the path it takes.
   performance) - covered by the upstream project, not the packaging layer.
 - Homebrew core internals (bottle format, `brew audit` rule implementations,
   `brew style` cop definitions) - treated as an external, trusted contract.
+
+## Verification Addendum (post-hardening validation pass)
+
+After AUDIT.md was written and the formula/workflows were hardened
+(fixing F1-F7 above), the following checks were run against the
+resulting state and are recorded here for traceability:
+
+- `ruby -c ferrite.rb`: syntax OK.
+- `tests/run.sh` (full, network-enabled): all 3 test files pass,
+  including the real tarball checksum verification against
+  `b4db8cc8eb0d3c2cef4a019a47d550c347df69fb8a4f77550c814fae463005cf`.
+- `brew audit --strict --online ferrite` (via a local trusted tap):
+  reduced from 8 problems to 1. Fixed: an over-length `desc`, `:build`
+  dependency ordering, `option` stanza ordering, a non-modifier `if`
+  with a single-line body, and a redundant explicit `0` argument to
+  `shell_output` (its documented default). One finding is intentionally
+  **not** auto-corrected: `post_install only creates directories
+  created by brew services`. Verified that `brew services` does not
+  create the parent directory for `log_path`/`error_log_path` itself,
+  so blindly deleting `post_install` (as `brew style --fix` would do)
+  risks a broken first `brew services start ferrite` run on a system
+  where `var/log/ferrite` does not yet exist. Kept intentionally, with
+  an inline code comment explaining why.
+- `brew style ./ferrite.rb`: 4 offenses before this pass, 3 after (the
+  `Style/Documentation` offense was fixed by adding a top-level class
+  comment). The two remaining `Sorbet/*Sigil` convention offenses
+  (wanting `# typed: true`/`strict` instead of `false`) are left
+  unchanged: this is a purely cosmetic Sorbet-typing convention with no
+  runtime effect, and other real-world community taps on the same
+  Homebrew installation (e.g. `skeema/tap`) use the same `# typed:
+  false` sigil, indicating it is an accepted norm for non-homebrew-core
+  taps rather than a defect.
+- Source install/test were both attempted and completed successfully
+  end-to-end in this environment: `brew install --build-from-source
+  ferrite` (via a locally trusted tap pointing at this checkout)
+  finished in ~15m36s, and `brew test ferrite` (the formula test do
+  block: version check, PING, SET/GET, DBSIZE) passed with no
+  failures. The equivalent `cargo build --release --features tls,cli`
+  was also run directly against the extracted v0.4.0 source tree as a
+  faster independent cross-check and completed in under 4 minutes.
+- Environment constraint discovered during validation: the sandbox
+  disk briefly reached 100% capacity during the dependency-heavy
+  `brew install` (LLVM and Rust build toolchain bottles are several GB
+  combined) because of unrelated concurrent workloads on the same
+  machine; the install still completed successfully once that
+  transient pressure passed, and all test artifacts were removed
+  afterwards (`brew uninstall ferrite`, `brew untap`) to restore disk
+  headroom. This is noted as a property of this shared sandbox, not of
+  the formula.

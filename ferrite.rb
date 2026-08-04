@@ -1,8 +1,10 @@
 # typed: false
 # frozen_string_literal: true
 
+# Formula for Ferrite: a Redis-compatible, tiered-storage key-value store
+# with agent memory and an optional WASM in-DB function runtime (Forge).
 class Ferrite < Formula
-  desc "High-performance, tiered-storage key-value store - drop-in Redis replacement with agent memory, WASM functions, and verifiable audit"
+  desc "Redis-compatible tiered-storage key-value store with agent memory and WASM"
   homepage "https://ferrite.rs"
   url "https://github.com/ferritelabs/ferrite/archive/refs/tags/v0.4.0.tar.gz"
   # SHA256 of the v0.4.0 release tarball, verified against the upstream
@@ -20,15 +22,15 @@ class Ferrite < Formula
     regex(/v?(\d+(?:\.\d+)+)/i)
   end
 
-  depends_on "rust" => :build
-  depends_on "pkg-config" => :build
+  option "with-forge", "Enable Forge WASM in-DB function runtime (ADR-019)"
+
   depends_on "cmake" => :build
+  depends_on "pkg-config" => :build
+  depends_on "rust" => :build
   # Runtime dependency for TLS support on every supported platform.
   # On macOS, prefer the Homebrew-installed OpenSSL over system LibreSSL.
   depends_on "openssl@3"
   uses_from_macos "curl"
-
-  option "with-forge", "Enable Forge WASM in-DB function runtime (ADR-019)"
 
   # Minimum Rust version is declared upstream via Cargo.toml rust-version;
   # see https://github.com/ferritelabs/ferrite/blob/v0.4.0/Cargo.toml
@@ -46,14 +48,17 @@ class Ferrite < Formula
     man1.install Dir["docs/man/*.1"] if Dir.exist?("docs/man")
 
     # Install example configuration as default config
-    if File.exist?("ferrite.example.toml")
-      (etc/"ferrite").install "ferrite.example.toml" => "ferrite.toml"
-    end
+    (etc/"ferrite").install "ferrite.example.toml" => "ferrite.toml" if File.exist?("ferrite.example.toml")
 
     # Install shell completions
     generate_completions_from_executable(bin/"ferrite", "completions")
   end
 
+  # NOTE: brew style flags this as removable (services are assumed to
+  # create their own directories), but brew services does not create the
+  # parent directory for log_path/error_log_path, so removing this would
+  # risk brew services start ferrite failing on a fresh install before
+  # var/log/ferrite exists. Kept intentionally; see AUDIT.md.
   def post_install
     # Create data directory
     (var/"lib/ferrite").mkpath
@@ -110,7 +115,7 @@ class Ferrite < Formula
 
     # Wait for server to be ready (retry up to 10 times)
     10.times do
-      break if shell_output("#{bin}/ferrite-cli -p #{port} PING 2>&1", 0).include?("PONG")
+      break if shell_output("#{bin}/ferrite-cli -p #{port} PING 2>&1").include?("PONG")
 
       sleep 1
     end
