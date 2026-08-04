@@ -7,8 +7,20 @@ on:
     branches: [main]
 
 jobs:
+  test:
+    name: Repo Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run dependency-free test suite (fast/offline mode)
+        # Fast mode keeps this gating job quick and immune to network
+        # flakiness; the full suite (including the real tarball checksum
+        # check) also runs with network access in the audit job below.
+        run: bash tests/run.sh --fast
+
   lint:
     name: Lint
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,11 +36,13 @@ jobs:
             abort "Missing sha256" unless content.include?("sha256")
             abort "Missing desc" unless content.include?("desc")
             abort "Missing license" unless content.include?("license")
+            abort "Formula must not contain placeholder values" if content.include?("PLACEHOLDER")
             puts "Formula structure OK"
           '
 
   audit:
     name: Formula Audit
+    needs: test
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,17 +51,33 @@ jobs:
       - name: Run brew audit
         run: |
           brew audit --strict --online ./ferrite.rb
+      - name: Run full test suite (network-enabled)
+        # Runs with network access so the real release tarball checksum
+        # is verified end-to-end, not just structurally.
+        run: bash tests/run.sh
       - name: Verify bottle configuration
         run: |
-          # Ensure all declared bottle platforms have valid checksums
+          # Bottles are optional: until build-bottles.yml has produced
+          # real metadata for a release, ferrite.rb intentionally has no
+          # bottle block and Homebrew builds from source. If a bottle
+          # block *is* present, every declared platform must have a
+          # real (non-placeholder) 64-character sha256.
           ruby -e '
             content = File.read("ferrite.rb")
-            bottle_section = content[/bottle do(.+?)end/m, 1]
-            platforms = bottle_section.scan(/(\w+):\s+"[a-f0-9]{64}"/)
-            puts "Found bottle platforms: #{platforms.flatten.join(", ")}"
+            bottle_section = content[/bottle do(.+?)\nend\n/m, 1]
+
+            if bottle_section.nil?
+              puts "No bottle block present; source install is expected. Skipping bottle checks."
+              exit 0
+            end
+
+            abort "Bottle block contains placeholder checksums" if bottle_section.include?("PLACEHOLDER")
+
+            platforms = bottle_section.scan(/(\w+):\s+"([a-f0-9]{64})"/)
+            puts "Found bottle platforms: #{platforms.map(&:first).join(", ")}"
             abort "ERROR: No bottle platforms found" if platforms.empty?
-            # Verify ARM64 bottles are present
-            arm64_platforms = platforms.flatten.select { |p| p.start_with?("arm64") }
+
+            arm64_platforms = platforms.map(&:first).select { |p| p.start_with?("arm64") }
             abort "ERROR: No ARM64 bottle platforms found" if arm64_platforms.empty?
             puts "ARM64 platforms verified: #{arm64_platforms.join(", ")}"
           '
