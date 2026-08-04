@@ -329,7 +329,9 @@ jobs:
             exit 1
           fi
           brew tap ferritelabs/ci "$(pwd)"
+          TAPPED_FORMULA="$(brew formula ferritelabs/ci/ferrite)"
           brew bottle --merge --write --no-commit ferrite--*.bottle.json
+          cp "${TAPPED_FORMULA}" ferrite.rb
           echo "Merged bottle metadata:"
           sed -n "/bottle do/,/^  end/p" ferrite.rb
 

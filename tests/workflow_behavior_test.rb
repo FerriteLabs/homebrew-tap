@@ -121,6 +121,10 @@ class WorkflowBehaviorTest < Minitest::Test
                  "the written formula bottle block must exactly match the validated JSON set")
     assert_match(/unexpectedly contains rebuild metadata/, source,
                  "the new bottle block must reject stale rebuild suffix metadata")
+    assert_match(/TAPPED_FORMULA="\$\(brew formula ferritelabs\/ci\/ferrite\)"/, source,
+                 "collect must locate the formula in Homebrew's cloned local tap")
+    assert_match(/cp "\$\{TAPPED_FORMULA\}" ferrite\.rb/, source,
+                 "collect must copy Homebrew's merged formula back to the Actions checkout")
   end
 
   # The matrix must build genuinely distinct, currently-supported bottle
