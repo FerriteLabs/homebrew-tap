@@ -48,9 +48,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Set up Homebrew
         uses: Homebrew/actions/setup-homebrew@v1
-      - name: Run brew audit
+      - name: Tap the checkout for Homebrew validation
+        run: brew tap ferritelabs/ci "$(pwd)"
+      - name: Run Homebrew audit and style
         run: |
-          brew audit --strict --online ./ferrite.rb
+          set -euo pipefail
+          brew audit --strict --online ferritelabs/ci/ferrite
+          brew style ferritelabs/ci/ferrite
       - name: Run full test suite (network-enabled)
         # Runs with network access so the real release tarball checksum
         # is verified end-to-end, not just structurally.

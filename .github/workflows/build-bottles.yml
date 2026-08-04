@@ -274,9 +274,10 @@ jobs:
           EXPECTED_TAGS="arm64_sequoia sequoia arm64_sonoma x86_64_linux"
           EXPECTED_COUNT=4
 
-          ACTUAL_COUNT="$(find . -maxdepth 1 -name "ferrite--*.bottle.json" | wc -l | tr -d "[:space:]")"
-          if [ "${ACTUAL_COUNT}" -ne "${EXPECTED_COUNT}" ]; then
-            echo "::error::Expected ${EXPECTED_COUNT} bottle JSON artifacts (one per matrix platform) but found ${ACTUAL_COUNT}. Refusing to merge a partial bottle set."
+          ACTUAL_JSON_COUNT="$(find . -maxdepth 1 -name "ferrite--*.bottle.json" | wc -l | tr -d "[:space:]")"
+          ACTUAL_TARBALL_COUNT="$(find . -maxdepth 1 -name "ferrite--*.bottle.tar.gz" | wc -l | tr -d "[:space:]")"
+          if [ "${ACTUAL_JSON_COUNT}" -ne "${EXPECTED_COUNT}" ] || [ "${ACTUAL_TARBALL_COUNT}" -ne "${EXPECTED_COUNT}" ]; then
+            echo "::error::Expected ${EXPECTED_COUNT} bottle JSON artifacts and ${EXPECTED_COUNT} tarballs, but found ${ACTUAL_JSON_COUNT} JSON files and ${ACTUAL_TARBALL_COUNT} tarballs. Refusing to merge a partial or contaminated bottle set."
             exit 1
           fi
 
@@ -291,27 +292,75 @@ jobs:
               echo "::error::Missing expected bottle tarball for platform '${tag}': ${EXPECTED_TARBALL}"
               exit 1
             fi
+
+            EXPECTED_ROOT_URL="https://github.com/ferritelabs/homebrew-tap/releases/download/v${VERSION}"
+            ruby -rjson -e '
+              path, version, expected_tag, expected_root_url = ARGV
+              data = JSON.parse(File.read(path))
+              abort "::error::#{path} must describe exactly one formula" unless data.length == 1
+              formula = data.values.first
+              bottle = formula.fetch("bottle")
+              tags = bottle.fetch("tags")
+              abort "::error::#{path} must describe exactly one bottle tag" unless tags.keys == [expected_tag]
+              abort "::error::#{path} has root_url #{bottle["root_url"].inspect}, expected #{expected_root_url}" \
+                unless bottle["root_url"] == expected_root_url
+              sha256 = tags.fetch(expected_tag).fetch("sha256")
+              abort "::error::#{path} has an invalid bottle checksum" unless sha256.match?(/\A[0-9a-f]{64}\z/)
+              pkg_version = formula.fetch("formula").fetch("pkg_version")
+              abort "::error::#{path} has package version #{pkg_version.inspect}, expected #{version}" \
+                unless pkg_version == version
+            ' "${EXPECTED_JSON}" "${VERSION}" "${tag}" "${EXPECTED_ROOT_URL}"
           done
 
-          echo "Found all ${ACTUAL_COUNT} expected bottle artifacts for: ${EXPECTED_TAGS}"
+          echo "Validated the complete ${ACTUAL_JSON_COUNT}-platform bottle set for: ${EXPECTED_TAGS}"
 
-      # Canonical Homebrew merge: brew bottle --merge reads the
-      # per-platform JSON manifests and writes (or inserts, if none
-      # exists yet) a single bottle do ... end block into the formula
-      # file itself. --keep-old preserves any existing bottle tags
-      # already committed in ferrite.rb that are not part of this run's
-      # JSON set, instead of silently dropping them - --merge --write
-      # without --keep-old replaces the entire bottle block with only
-      # the tags passed in, which would overwrite (not merge) a
-      # previously-recorded platform if a single matrix job failed to
-      # upload its artifact.
+      # The version-update PR must have removed the prior release's bottle
+      # block. After the exact expected artifact set is validated above,
+      # canonical Homebrew merge writes a complete new block using only
+      # this run's JSON. Old root URLs, checksums, and rebuild metadata
+      # belong to a different source version and must never be preserved.
       - name: Merge bottle metadata into the formula
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
-          brew tap ferritelabs/homebrew-tap "$(pwd)"
-          brew bottle --merge --write --keep-old --no-commit ferrite--*.bottle.json
+          if grep -q "^[[:space:]]*bottle do" ferrite.rb; then
+            echo "::error::ferrite.rb still contains bottle metadata from a prior release; run and merge update-formula.yml first"
+            exit 1
+          fi
+          brew tap ferritelabs/ci "$(pwd)"
+          brew bottle --merge --write --no-commit ferrite--*.bottle.json
           echo "Merged bottle metadata:"
           sed -n "/bottle do/,/^  end/p" ferrite.rb
+
+          ruby -rjson -e '
+            version = ENV.fetch("VERSION")
+            expected_root_url = "https://github.com/ferritelabs/homebrew-tap/releases/download/v#{version}"
+            expected = Dir["ferrite--*.bottle.json"].sort.each_with_object({}) do |path, checksums|
+              formula = JSON.parse(File.read(path)).values.first
+              bottle = formula.fetch("bottle")
+              abort "::error::#{path} has an unexpected root_url" unless bottle["root_url"] == expected_root_url
+              tag, data = bottle.fetch("tags").first
+              checksums[tag] = data.fetch("sha256")
+            end
+
+            source = File.read("ferrite.rb")
+            blocks = source.scan(/^  bottle do\n.*?^  end\n/m)
+            abort "::error::ferrite.rb must contain exactly one merged bottle block" unless blocks.length == 1
+            block = blocks.first
+            abort "::error::merged bottle block has an unexpected root_url" \
+              unless block.include?(%(root_url "#{expected_root_url}"))
+            abort "::error::merged bottle block unexpectedly contains rebuild metadata" \
+              if block.match?(/^\s*rebuild\s+/)
+
+            actual = block.scan(
+              /^\s*sha256(?:\s+cellar:\s*[^,]+,)?\s+([a-z0-9_]+):\s*"([0-9a-f]{64})"\s*$/,
+            ).to_h
+            abort "::error::merged bottle checksums do not exactly match the validated JSON set" \
+              unless actual == expected
+
+            puts "Verified complete merged bottle block for #{expected.keys.sort.join(", ")}"
+          '
 
       - name: Run formula syntax check and fast test suite
         run: |
@@ -319,8 +368,11 @@ jobs:
           ruby -c ferrite.rb
           bash tests/run.sh --fast
 
-      - name: Run brew audit on the updated formula
-        run: brew audit --strict --online ./ferrite.rb
+      - name: Run Homebrew audit and style on the updated formula
+        run: |
+          set -euo pipefail
+          brew audit --strict --online ferritelabs/ci/ferrite
+          brew style ferritelabs/ci/ferrite
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v6

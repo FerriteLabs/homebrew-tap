@@ -20,6 +20,7 @@ class WorkflowBehaviorTest < Minitest::Test
   BUILD_BOTTLES = FerriteTap::WORKFLOWS_DIR + "build-bottles.yml"
   CI_WORKFLOW = FerriteTap::WORKFLOWS_DIR + "ci.yml"
   CHECKSUM_TEST = FerriteTap::ROOT + "tests" + "formula_checksum_test.rb"
+  FORMULA_UPDATER = FerriteTap::ROOT + "scripts" + "update_formula.rb"
 
   def test_workflow_files_exist
     assert UPDATE_FORMULA.file?
@@ -74,6 +75,24 @@ class WorkflowBehaviorTest < Minitest::Test
     assert_match(/create-pull-request/, UPDATE_FORMULA.read)
   end
 
+  def test_update_formula_removes_prior_bottle_metadata_before_source_update
+    source = UPDATE_FORMULA.read
+    assert_match(/ruby scripts\/update_formula\.rb/, source,
+                 "workflow must use the behavior-tested formula updater")
+
+    updater = FORMULA_UPDATER.read
+    bottle_removal_index = updater.index(/sub\(BOTTLE_BLOCK/)
+    url_update_index = updater.index(/sub\(SOURCE_URL/)
+    sha_update_index = updater.index(/sub\(SOURCE_SHA256/)
+    refute_nil bottle_removal_index, "updater must remove the prior bottle block"
+    refute_nil url_update_index, "updater must update the source url"
+    refute_nil sha_update_index, "updater must update the source sha256"
+    assert bottle_removal_index < url_update_index,
+           "the old bottle block must be removed before the source url changes"
+    assert bottle_removal_index < sha_update_index,
+           "the old bottle block must be removed before the source sha256 changes"
+  end
+
   def test_build_bottles_validates_version_input
     assert_has_semver_validation(BUILD_BOTTLES)
   end
@@ -86,13 +105,22 @@ class WorkflowBehaviorTest < Minitest::Test
                  "must not reintroduce placeholder-regex substitution for bottle checksums")
   end
 
-  def test_build_bottles_merges_without_overwriting_existing_platforms
+  def test_build_bottles_replaces_prior_metadata_with_complete_new_set
     source = BUILD_BOTTLES.read
     assert_match(/--merge/, source)
-    assert_match(/--keep-old/, source,
-                 "must pass --keep-old to brew bottle --merge, otherwise merging this run's " \
-                 "bottle JSON would replace (not merge with) any previously-recorded platform " \
-                 "not included in the current matrix")
+    assert_match(/--write/, source)
+    refute_match(/brew\s+bottle[^\n]*--keep-old/, source,
+                 "a new source version must not preserve bottle metadata from the prior version")
+    assert_match(/still contains bottle metadata from a prior release/, source,
+                 "collect must fail closed if the version-update PR did not remove the old bottle block")
+    assert_match(/ACTUAL_JSON_COUNT/, source)
+    assert_match(/ACTUAL_TARBALL_COUNT/, source)
+    assert_match(/must describe exactly one bottle tag/, source,
+                 "each bottle JSON must be validated before the complete set is merged")
+    assert_match(/actual == expected/, source,
+                 "the written formula bottle block must exactly match the validated JSON set")
+    assert_match(/unexpectedly contains rebuild metadata/, source,
+                 "the new bottle block must reject stale rebuild suffix metadata")
   end
 
   # The matrix must build genuinely distinct, currently-supported bottle
@@ -206,6 +234,20 @@ class WorkflowBehaviorTest < Minitest::Test
                  "the audit job must run the full suite, not --fast, or the network-bound checksum test never actually runs in CI")
     refute_match(/FERRITE_TAP_SKIP_NETWORK/, run_script,
                  "the audit job must not opt out of the network-bound checksum test")
+  end
+
+  def test_homebrew_checks_use_a_deterministic_tap_qualified_formula
+    [CI_WORKFLOW, BUILD_BOTTLES].each do |path|
+      source = path.read
+      assert_match(/brew tap ferritelabs\/ci "\$\(pwd\)"/, source,
+                   "#{path.basename} must tap the checkout under the deterministic ferritelabs/ci name")
+      assert_match(/brew audit --strict --online ferritelabs\/ci\/ferrite/, source,
+                   "#{path.basename} must audit the tap-qualified formula")
+      assert_match(/brew style ferritelabs\/ci\/ferrite/, source,
+                   "#{path.basename} must style the tap-qualified formula")
+      refute_match(/brew audit[^\n]*(?:\.\/)?ferrite\.rb/, source,
+                   "#{path.basename} must never use path-based brew audit")
+    end
   end
 
   # Guards against reintroducing a broad rescue that silently turns a

@@ -96,11 +96,10 @@ jobs:
           echo "sha256=${COMPUTED_SHA256}" >> "$GITHUB_OUTPUT"
           echo "url=${ARCHIVE_URL}" >> "$GITHUB_OUTPUT"
 
-      # ferrite.rb and release-metadata.json are updated together from
-      # the same validated in-memory values so they can never disagree;
-      # both writes only happen after every substitution is verified to
-      # have taken effect, so a partial/half-updated pair is never
-      # committed by this step.
+      # A version bump invalidates every bottle from the prior version.
+      # The updater removes the complete old bottle block in-memory before
+      # changing the source url/sha256, validates the result, then replaces
+      # each file via a same-directory atomic rename.
       - name: Update formula and canonical metadata atomically
         env:
           VERSION: ${{ steps.release.outputs.version }}
@@ -108,36 +107,7 @@ jobs:
           ARCHIVE_URL: ${{ steps.checksum.outputs.url }}
         run: |
           set -euo pipefail
-          ruby -e "
-            require \"json\"
-            require \"time\"
-
-            version = ENV.fetch(\"VERSION\")
-            sha256 = ENV.fetch(\"SHA256\")
-            archive_url = ENV.fetch(\"ARCHIVE_URL\")
-
-            formula_path = \"ferrite.rb\"
-            metadata_path = \"release-metadata.json\"
-
-            formula = File.read(formula_path)
-            new_formula = formula.sub(/^(\s*url\s+)\"[^\"]+\"/) { \"#{Regexp.last_match(1)}\\\"#{archive_url}\\\"\" }
-            raise \"failed to update url in #{formula_path}\" if new_formula == formula
-
-            newer_formula = new_formula.sub(/^(\s*sha256\s+)\"[^\"]+\"/) { \"#{Regexp.last_match(1)}\\\"#{sha256}\\\"\" }
-            raise \"failed to update source sha256 in #{formula_path}\" if newer_formula == new_formula
-
-            metadata = {
-              \"version\" => version,
-              \"sha256\" => sha256,
-              \"url\" => archive_url,
-              \"updated_at\" => Time.now.utc.iso8601,
-              \"updated_by\" => \"update-formula.yml\",
-            }
-
-            File.write(formula_path, newer_formula)
-            File.write(metadata_path, JSON.pretty_generate(metadata) + \"\n\")
-            puts \"Updated #{formula_path} and #{metadata_path} to v#{version} (#{sha256})\"
-          "
+          ruby scripts/update_formula.rb
 
       - name: Run formula syntax check and fast test suite
         run: |
