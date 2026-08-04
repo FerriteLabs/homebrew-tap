@@ -326,3 +326,135 @@ tap-clone copy-back corrected in `eeeecc5`, and verified on 2026-08-04:
   local verification covers the complete-set gates and post-merge comparison
   statically/behaviorally but does not manufacture substitute bottle
   artifacts.
+
+## Verification Addendum (bottle-job tap-qualification, JSON path normalization, Kernel.system readiness fix)
+
+This pass fixes three issues found while re-reviewing the bottle-build and
+formula-test paths, verified on 2026-08-04:
+
+- **`build-bottles.yml` `bottle` job now tap-qualifies every Homebrew
+  invocation.** It previously ran `brew install --build-bottle ./ferrite.rb`
+  and `brew bottle --json ... ./ferrite.rb` against a bare path formula. This
+  environment's own `brew audit`/`brew install` reject path-formula
+  invocations outright (`Calling 'brew audit [path ...]' is disabled! Use
+  'brew audit [name ...]' instead`), and a path formula also has no tap
+  identity, which is what made the bottle JSON's embedded `formula.path` a
+  raw, runner-specific filesystem path in the first place. The job now taps
+  the checkout as `ferritelabs/ci` (same deterministic name used everywhere
+  else) before running `brew install --build-bottle ferritelabs/ci/ferrite`
+  and `brew bottle --json ... ferritelabs/ci/ferrite`.
+- **`collect` job normalizes every downloaded bottle JSON's `formula.path`
+  before merging, and fixes the merged-formula copy direction.** Each
+  per-platform bottle JSON embeds a `formula.path` captured on the bottle-job
+  runner that built it; `brew bottle --merge` resolves that value against
+  `HOMEBREW_REPOSITORY` (`path = HOMEBREW_REPOSITORY/bottle_hash["formula"]["path"]`,
+  and Ruby's `Pathname#+` silently discards the left side entirely when the
+  right side is already absolute) to decide which formula file to write the
+  merged bottle block into. Left unnormalized this only works by
+  coincidence. The collect job now creates its own deterministic local tap
+  first, then rewrites every `ferrite--*.bottle.json`'s `formula.path` to
+  this runner's own `TAPPED_FORMULA` (expressed the same tap-relative way
+  Homebrew itself generates it) before running the canonical
+  `brew bottle --merge --write --no-commit`. The immediately prior commit on
+  this branch (`d0b5d63`, "preserve merged bottle metadata") had instead
+  flipped the copy direction to `cp ferrite.rb "${TAPPED_FORMULA}"` -
+  copying the *unmerged* checkout formula over the tapped clone - which
+  silently discards whatever the merge wrote and ships a PR with no bottle
+  metadata at all. This is now reverted: after confirming (`grep -q
+  "bottle do" "${TAPPED_FORMULA}"`) that the merge actually wrote a bottle
+  block into the tapped formula, the job copies `"${TAPPED_FORMULA}"` back
+  to the checkout's `ferrite.rb`, never the reverse.
+  - This was reproduced and fixed end-to-end against a real (non-`ferrite`)
+    dummy formula and a real local Homebrew installation before being
+    encoded into the workflow: with an unnormalized, foreign-runner-shaped
+    `formula.path`, `brew bottle --merge --write --no-commit` failed
+    outright (`Error: No available formula with the name "testpkg"`);
+    after normalizing `formula.path` to the collect runner's own
+    `TAPPED_FORMULA`, the merge correctly wrote the new `bottle do` block
+    into the tapped clone while leaving the checkout's formula file
+    completely untouched, confirming the checkout must be updated via an
+    explicit copy-back rather than relying on the merge to touch it
+    directly.
+- **`ferrite.rb`'s server-readiness poll now calls `Kernel.system` instead
+  of a bare `system(...)`.** Inside a Formula's `test do` block, `self` is
+  the Formula instance, so an unqualified `system(...)` call resolves to
+  `Formula#system` (instance-method lookup wins over the `Kernel` module
+  mixed into `Object`) - not `Kernel#system`. `Formula#system` has a fixed
+  positional signature with no `out:`/`err:` redirection support and raises
+  `BuildError` on any non-zero exit rather than returning `false`, which
+  would have broken the retry loop on the very first not-yet-ready attempt
+  (either as an argument-shape mismatch or a raised, test-failing
+  exception) - directly contradicting the comment above it explaining why a
+  quiet, non-raising poll was needed. The fix calls
+  `Kernel.system((bin/"ferrite-cli").to_s, "-p", port.to_s, "PING", out:
+  File::NULL, err: File::NULL)` explicitly, preserving the exact
+  `begin`/`ensure` `server_pid` cleanup and 10-attempt retry structure
+  unchanged.
+
+New/updated tests:
+
+- `tests/workflow_behavior_test.rb`: fixed the two assertions that had
+  encoded the backwards `cp ferrite.rb "${TAPPED_FORMULA}"` direction
+  (previously introduced by `d0b5d63`) to require the correct
+  `cp "${TAPPED_FORMULA}" ferrite.rb` direction and to `refute_match` the
+  backwards form; added `test_build_bottles_bottle_job_uses_tap_qualified_formula_never_a_path`
+  (asserts the `bottle` job taps `ferritelabs/ci` before installing/
+  bottling, uses `ferritelabs/ci/ferrite` for both `brew install
+  --build-bottle` and `brew bottle --json`, and never a `./ferrite.rb`
+  path form); added
+  `test_collect_normalizes_bottle_json_formula_path_before_merging`
+  (asserts the tap/normalize/merge/confirm/copy-back steps appear, in that
+  exact order, in the collect job).
+- `tests/bottle_json_normalization_test.rb` (new): extracts the *actual*
+  embedded Ruby normalization script and Bash confirm-and-copy-back
+  snippet from `build-bottles.yml` and executes them for real against
+  fixture bottle JSON files shaped like what a macOS bottle-job runner
+  (`/opt/homebrew`-rooted) and a Linux bottle-job runner
+  (`/home/linuxbrew/.linuxbrew`-rooted) actually produce, proving both
+  normalize to the identical tap-relative `formula.path` on one collect
+  runner, and that the copy-back step only ever copies tapped-formula ->
+  checkout (never the reverse) and fails closed when the tapped formula
+  has no merged bottle block.
+- `tests/formula_readiness_polling_test.rb` (new): `instance_eval`s the
+  exact retry loop extracted from `ferrite.rb`'s `test do` block inside a
+  harness object whose own `system` method raises (mimicking
+  `Formula#system`), against a real forked helper script that fails a
+  fixed number of times before succeeding - proving the loop retries,
+  reaches `ready`, and never invokes the raising `system` override; a
+  companion test proves it also fails closed (never reports `ready`) when
+  the command never succeeds; a final test proves the underlying Ruby
+  semantics directly (`Kernel.system` bypasses an instance `system`
+  override and returns a boolean instead of raising).
+- `tests/formula_structure_test.rb`: `test_readiness_poll_does_not_assert_on_transient_nonzero_exit`
+  now requires `Kernel.system(` (not bare `system(`) and both `out:
+  File::NULL`/`err: File::NULL`; added
+  `test_readiness_poll_uses_kernel_system_not_formula_system`, which
+  `refute_match`es a bare `system(bin...)` call and requires the exact
+  `Kernel.system((bin/"ferrite-cli").to_s` call shape.
+
+Verification run this session:
+
+- `/bin/bash tests/run.sh --fast` (macOS system Bash 3.2.57) and
+  `/bin/bash tests/run.sh` (full, network-enabled): both pass, 6 test
+  files, 57 tests / 401 assertions (fast, 2 intentional skips) and
+  57 tests / 404 assertions (full, 1 intentional absent-bottle skip) - 0
+  failures/errors in both.
+- `ruby -c ferrite.rb` and `ruby -c` on every file under `scripts/` and
+  `tests/`: syntax OK.
+- `actionlint` on every workflow file: no findings.
+- `brew tap ferritelabs/ci "$(pwd)"` followed by
+  `brew audit --strict --online ferritelabs/ci/ferrite` and
+  `brew style ferritelabs/ci/ferrite`: both report only the single,
+  already-documented, intentionally-retained `post_install`
+  directory-creation finding - no new findings from any change in this
+  pass. The tap was removed (`brew untap ferritelabs/ci`) after
+  verification.
+- Environment note: this sandbox's Homebrew installation rejects
+  `brew install [path]`/`brew audit [path]`/`brew bottle [path]` outright
+  (`Calling 'brew audit [path ...]' is disabled!`) and requires
+  `brew trust --formula <tap>/<formula>` for a newly tapped, untrusted
+  formula before `brew install`/`brew bottle --merge` will load it. Both
+  are consistent with (and independently confirm the necessity of) this
+  pass's tap-qualification fix; the real `ferritelabs/homebrew-tap`
+  repository's CI runs on `Homebrew/actions/setup-homebrew@v1` GitHub-hosted
+  runners, which do not require this `brew trust` step.

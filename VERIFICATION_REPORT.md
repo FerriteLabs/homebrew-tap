@@ -171,3 +171,56 @@ is materially lower than build-bottles.yml's.
   dependency-heavy `brew install` (unrelated concurrent workloads on
   the same shared machine) but recovered and the install completed
   successfully; all test-only artifacts were removed afterwards.
+
+## This session's follow-up (2026-08-04): tap-qualified bottle jobs, JSON path normalization, Kernel.system readiness fix
+
+Three fixes, verified end-to-end:
+
+- `build-bottles.yml`'s `bottle` job now taps the checkout as
+  `ferritelabs/ci` and runs `brew install --build-bottle
+  ferritelabs/ci/ferrite` / `brew bottle --json ... ferritelabs/ci/ferrite`,
+  never a path formula (`./ferrite.rb`).
+- `build-bottles.yml`'s `collect` job now normalizes every downloaded
+  bottle JSON's `formula.path` to this collect runner's own
+  `TAPPED_FORMULA` before `brew bottle --merge --write --no-commit`, and
+  copies the merged tapped formula back to the checkout
+  (`cp "${TAPPED_FORMULA}" ferrite.rb`) - reverting the backwards
+  `cp ferrite.rb "${TAPPED_FORMULA}"` direction introduced by the
+  immediately prior commit (`d0b5d63`), which silently discarded merged
+  bottle metadata instead of preserving it.
+- `ferrite.rb`'s readiness poll now calls `Kernel.system((bin/"ferrite-cli").to_s,
+  ..., out: File::NULL, err: File::NULL)` explicitly instead of a bare
+  `system(...)`, which inside a Formula's `test do` block resolves to
+  `Formula#system` (raises `BuildError`, no `out:`/`err:` support) rather
+  than the intended non-raising, redirection-capable `Kernel#system`. The
+  `begin`/`ensure` `server_pid` cleanup and 10-attempt retry structure are
+  unchanged.
+
+Verification:
+
+- `/bin/bash tests/run.sh --fast` and `/bin/bash tests/run.sh` (full,
+  network-enabled) under macOS system Bash 3.2.57: both pass, 6 test
+  files, 57 tests / 401 assertions (fast, 2 intentional skips) and
+  57 tests / 404 assertions (full, 1 intentional skip), 0 failures/errors.
+- `ruby -c` passed for `ferrite.rb` and every file under `scripts/` and
+  `tests/`. `actionlint` on every workflow file: no findings.
+- `brew tap ferritelabs/ci "$(pwd)"` then
+  `brew audit --strict --online ferritelabs/ci/ferrite` and
+  `brew style ferritelabs/ci/ferrite`: both return only the
+  already-documented, intentionally-retained `post_install` finding - no
+  regressions. Tap removed after verification.
+- The JSON-path-normalization fix was additionally proven against a real
+  local Homebrew install using a throwaway dummy formula (not `ferrite`,
+  to avoid a slow real build): with an unnormalized foreign-runner-shaped
+  `formula.path`, `brew bottle --merge --write --no-commit` failed outright
+  (`Error: No available formula with the name "testpkg"`); after applying
+  the same normalization the workflow now runs, the merge correctly wrote
+  the new `bottle do` block into the tapped clone while leaving the
+  checkout's own formula file untouched - confirming both the need for
+  normalization and the correct (tapped -> checkout) copy-back direction.
+- A real four-platform `brew bottle --merge` against the actual `ferrite`
+  formula remains GitHub-runner-only (multi-platform bottle artifacts
+  cannot be produced locally); this session's verification covers the
+  normalization/merge/copy-back logic itself (via the dummy-formula
+  reproduction above and the new `tests/bottle_json_normalization_test.rb`
+  fixtures) rather than fabricating substitute four-platform bottle sets.
