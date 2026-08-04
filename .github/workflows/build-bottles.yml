@@ -341,10 +341,58 @@ jobs:
             echo "::error::ferrite.rb still contains bottle metadata from a prior release; run and merge update-formula.yml first"
             exit 1
           fi
+
+          # Create this collect runner's own deterministic local tap so
+          # `brew bottle --merge` has a stable, tap-qualified formula to
+          # target.
           brew tap ferritelabs/ci "$(pwd)"
           TAPPED_FORMULA="$(brew formula ferritelabs/ci/ferrite)"
+
+          # Each per-platform bottle JSON embeds a `formula.path` that
+          # was captured on whichever bottle-job runner built that
+          # platform (a different OS, HOMEBREW_REPOSITORY, and tap
+          # clone than this collect runner). `brew bottle --merge`
+          # resolves that field as HOMEBREW_REPOSITORY joined with the
+          # JSON's `formula.path`, so left as-is it only targets the
+          # right file by coincidence. Normalize every downloaded
+          # bottle JSON's `formula.path` to this collect runner's own
+          # TAPPED_FORMULA - expressed the same relative-to-
+          # HOMEBREW_REPOSITORY way Homebrew itself generates it -
+          # before merging, so the merge deterministically writes into
+          # this runner's tapped formula clone regardless of which
+          # platform's JSON is processed.
+          HOMEBREW_REPOSITORY_PATH="$(brew --repository)"
+          ruby -rjson -rpathname -e '
+            homebrew_repository, tapped_formula = ARGV
+            relative_path = Pathname.new(tapped_formula).to_s.delete_prefix("#{homebrew_repository}/")
+
+            json_files = Dir["ferrite--*.bottle.json"]
+            json_files.each do |path|
+              data = JSON.parse(File.read(path))
+              data.each_value { |formula_hash| formula_hash.fetch("formula")["path"] = relative_path }
+              File.write(path, JSON.pretty_generate(data))
+            end
+
+            puts "Normalized formula.path to #{relative_path.inspect} in #{json_files.length} bottle JSON file(s)"
+          ' "${HOMEBREW_REPOSITORY_PATH}" "${TAPPED_FORMULA}"
+
           brew bottle --merge --write --no-commit ferrite--*.bottle.json
-          cp ferrite.rb "${TAPPED_FORMULA}"
+
+          # `brew bottle --merge --write` resolves the (now-normalized)
+          # `formula.path` against HOMEBREW_REPOSITORY and writes the
+          # new bottle block there - i.e. into TAPPED_FORMULA, not this
+          # checkout's ferrite.rb directly. Confirm that actually
+          # happened before trusting it, then copy the merged tapped
+          # formula back into the workspace checkout for verification
+          # and the pull request. Copying in the opposite direction
+          # (workspace -> tapped) would silently discard whatever
+          # `brew bottle --merge` wrote and ship a formula with no
+          # bottle metadata at all.
+          if ! grep -q "^[[:space:]]*bottle do" "${TAPPED_FORMULA}"; then
+            echo "::error::brew bottle --merge did not write a bottle block into the tapped formula (${TAPPED_FORMULA}); refusing to copy stale or unmerged metadata into the checkout"
+            exit 1
+          fi
+          cp "${TAPPED_FORMULA}" ferrite.rb
           echo "Merged bottle metadata:"
           sed -n "/bottle do/,/^  end/p" ferrite.rb
 

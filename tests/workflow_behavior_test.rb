@@ -123,8 +123,22 @@ class WorkflowBehaviorTest < Minitest::Test
                  "the new bottle block must reject stale rebuild suffix metadata")
     assert_match(/TAPPED_FORMULA="\$\(brew formula ferritelabs\/ci\/ferrite\)"/, source,
                  "collect must locate the formula in Homebrew's cloned local tap")
-    assert_match(/cp ferrite\.rb "\$\{TAPPED_FORMULA\}"/, source,
-                 "collect must copy the merged checkout formula into the local tap before audit")
+    # `brew bottle --merge --write` resolves each bottle JSON's
+    # `formula.path` against HOMEBREW_REPOSITORY and writes the new
+    # bottle block there - i.e. into TAPPED_FORMULA, not the checkout's
+    # ferrite.rb directly (see test_collect_normalizes_bottle_json_formula_path
+    # in this file and formula_json_path_normalization_test.rb for the
+    # normalization that makes that resolution deterministic). The
+    # merged result must then be copied *from* the tapped formula *back
+    # into* the checkout, never the other way around: copying the
+    # (still-unmerged) checkout formula over the tapped one would
+    # silently discard whatever `brew bottle --merge` wrote.
+    assert_match(/cp\s+"\$\{TAPPED_FORMULA\}"\s+ferrite\.rb/, source,
+                 "collect must copy the merged tapped formula back into the Actions checkout, " \
+                 "not the reverse")
+    refute_match(/cp\s+ferrite\.rb\s+"\$\{TAPPED_FORMULA\}"/, source,
+                 "collect must never copy the (unmerged) checkout formula over the merged tapped " \
+                 "formula - that would silently discard the merge result")
   end
 
   # The bottle-build matrix must never install/bottle a bare path
@@ -153,13 +167,45 @@ class WorkflowBehaviorTest < Minitest::Test
 
     assert_match(/brew bottle --json.*ferritelabs\/ci\/ferrite\b/, build_step,
                  "bottle job must run brew bottle --json against the tap-qualified formula")
-    refute_match(%r{brew bottle --json[^\n]*\./?ferrite\.rb}, build_step,
+    refute_match(%r{brew bottle --json[^
+]*\./?ferrite\.rb}, build_step,
                  "bottle job must never run brew bottle --json against a path formula (./ferrite.rb)")
 
     tap_step_index = bottle_steps.index(tap_step)
     build_step_index = bottle_steps.index { |step| step.is_a?(Hash) && step["run"] == build_step }
     assert tap_step_index < build_step_index,
            "the checkout must be tapped before it is installed/bottled"
+  end
+
+  # After creating its own deterministic local tap, the collect job must
+  # rewrite every downloaded bottle JSON's `formula.path` to this
+  # runner's own TAPPED_FORMULA (expressed the same relative-to-
+  # HOMEBREW_REPOSITORY way Homebrew itself generates it) *before*
+  # `brew bottle --merge --write --no-commit` runs - otherwise the merge
+  # resolves a foreign runner's embedded path instead of this runner's
+  # tapped formula clone.
+  def test_collect_normalizes_bottle_json_formula_path_before_merging
+    source = BUILD_BOTTLES.read
+
+    tap_index = source.index(/brew tap ferritelabs\/ci "\$\(pwd\)"/)
+    tapped_formula_index = source.index(/TAPPED_FORMULA="\$\(brew formula ferritelabs\/ci\/ferrite\)"/)
+    normalize_index = source.index(/formula_hash\.fetch\("formula"\)\["path"\]\s*=\s*relative_path/)
+    merge_index = source.index(/brew bottle --merge --write --no-commit/)
+    confirm_index = source.index(/grep -q "\^\[\[:space:\]\]\*bottle do" "\$\{TAPPED_FORMULA\}"/)
+    copy_back_index = source.index(/cp\s+"\$\{TAPPED_FORMULA\}"\s+ferrite\.rb/)
+
+    refute_nil tap_index, "collect must tap the checkout"
+    refute_nil tapped_formula_index, "collect must resolve TAPPED_FORMULA"
+    refute_nil normalize_index, "collect must normalize each JSON's formula.path to TAPPED_FORMULA"
+    refute_nil merge_index, "collect must run the canonical brew bottle --merge --write --no-commit"
+    refute_nil confirm_index, "collect must confirm the merge actually wrote into TAPPED_FORMULA"
+    refute_nil copy_back_index, "collect must copy the merged tapped formula back to the checkout"
+
+    assert tap_index < tapped_formula_index, "must tap before resolving TAPPED_FORMULA"
+    assert tapped_formula_index < normalize_index, "must resolve TAPPED_FORMULA before normalizing JSON paths"
+    assert normalize_index < merge_index, "must normalize JSON paths before merging"
+    assert merge_index < confirm_index, "must merge before confirming the tapped formula was written"
+    assert confirm_index < copy_back_index, "must confirm the merge succeeded before copying it back"
   end
 
   # The matrix must build genuinely distinct, currently-supported bottle
