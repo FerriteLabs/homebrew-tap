@@ -112,10 +112,9 @@ dependency-free test suite (`tests/run.sh`) unless noted otherwise:
 - `tests/run.sh` runs under macOS's system `/bin/bash` (3.2, no
   `mapfile`/`readarray`/associative arrays) as well as any modern Bash.
 
-The canonical tapped checks retain one shared `brew audit --strict` /
-`brew style` finding (`post_install` creating directories). It is
-intentional; see the Verification Addendum below and
-`VERIFICATION_REPORT.md` for the reasoning.
+The canonical tapped `brew audit --strict --online` check is clean. The
+previously retained `post_install` directory-creation finding was resolved
+after current Homebrew policy confirmed those paths are service-managed.
 
 ## Ordered Workflow Sequence (release-to-install path, current)
 
@@ -494,3 +493,12 @@ Verification on macOS system Bash 3.2.57:
   as `ferritelabs/ci`; both reported only the already-documented,
   intentionally retained `post_install` directory-creation finding. The tap
   was removed after verification.
+
+## CI Audit Follow-up Resolution
+
+- Removed the directory-only `post_install` hook because current Homebrew
+  treats the service working and log directories as service-managed.
+- The service contract is unchanged: `working_dir`, `log_path`, and
+  `error_log_path` still point to the same locations.
+- The GitHub-hosted strict formula audit now runs without an intentional
+  exception.

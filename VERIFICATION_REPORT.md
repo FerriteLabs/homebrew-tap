@@ -112,10 +112,8 @@ tests/workflow_behavior_test.rb      | 141 ++++++++++++++++++++++++++++
   real download-and-hash comparison of the v0.4.0 tarball against the
   formula sha256.
 - `ruby -c ferrite.rb`: syntax OK.
-- `brew audit --strict --online` (via a locally trusted tap, since this
-  environment disables path-based `brew audit`): 1 finding remains,
-  intentionally retained and documented (see AUDIT.md addendum and the
-  inline comment above `post_install`).
+- `brew audit --strict --online` is expected to be clean after removing the
+  directory-only `post_install` hook rejected by current Homebrew policy.
 - `brew style ./ferrite.rb`: 2 offenses remain (both `Sorbet/*Sigil`
   convention warnings on `# typed: false`), intentionally left unchanged
   as a purely cosmetic, no-runtime-effect, community-tap-consistent
@@ -134,11 +132,6 @@ tests/workflow_behavior_test.rb      | 141 ++++++++++++++++++++++++++++
   unchanged. Purely cosmetic; matches other real community taps on the
   same Homebrew installation; bumping to `strict` risks requiring full
   Sorbet type annotations for no packaging benefit.
-- `post_install` directory creation (1 `brew audit --strict` finding,
-  auto-correctable): left unchanged. Removing it risks a broken first
-  `brew services start ferrite` if `var/log/ferrite` does not already
-  exist, since `brew services` does not create that parent directory
-  itself. Documented inline and in AUDIT.md.
 - End-to-end execution of the real GitHub Actions runners for
   `update-formula.yml` and `build-bottles.yml` was not possible from
   this local sandbox. Each workflow was instead validated by: parsing
@@ -255,3 +248,10 @@ Verification:
   normalization/merge/copy-back logic itself (via the dummy-formula
   reproduction above and the new `tests/bottle_json_normalization_test.rb`
   fixtures) rather than fabricating substitute four-platform bottle sets.
+
+## CI audit follow-up
+
+- The GitHub-hosted strict audit confirmed current Homebrew service handling
+  makes the directory-only `post_install` hook redundant.
+- The hook was removed while preserving the existing service working and log
+  paths; `Formula Audit` is now expected to be clean.

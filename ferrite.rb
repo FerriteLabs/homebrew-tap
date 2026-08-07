@@ -54,19 +54,6 @@ class Ferrite < Formula
     generate_completions_from_executable(bin/"ferrite", "completions")
   end
 
-  # NOTE: brew style flags this as removable (services are assumed to
-  # create their own directories), but brew services does not create the
-  # parent directory for log_path/error_log_path, so removing this would
-  # risk brew services start ferrite failing on a fresh install before
-  # var/log/ferrite exists. Kept intentionally; see AUDIT.md.
-  def post_install
-    # Create data directory
-    (var/"lib/ferrite").mkpath
-
-    # Create log directory
-    (var/"log/ferrite").mkpath
-  end
-
   def caveats
     <<~EOS
       Ferrite is installed! To get started:
