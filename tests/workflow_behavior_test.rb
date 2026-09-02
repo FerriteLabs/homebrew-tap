@@ -62,6 +62,22 @@ class WorkflowBehaviorTest < Minitest::Test
     assert_match(/curl/, source, "workflow must download the tagged archive to hash it")
   end
 
+  def test_update_formula_requires_upstream_tag_before_checksum_or_update
+    source = UPDATE_FORMULA.read
+    tag_gate_index = source.index(/git ls-remote --exit-code --tags/)
+    checksum_index = source.index(/COMPUTED_SHA256=/)
+    update_index = source.index(/ruby scripts\/update_formula\.rb/)
+
+    refute_nil tag_gate_index, "formula update must explicitly require the upstream release tag"
+    refute_nil checksum_index
+    refute_nil update_index
+    assert tag_gate_index < checksum_index,
+           "the upstream tag must exist before the canonical archive checksum is computed"
+    assert checksum_index < update_index,
+           "the canonical checksum must be verified before formula/metadata files are updated"
+    assert_match(%r{refs/tags/\$\{RELEASE_TAG\}}, source)
+  end
+
   def test_update_formula_compares_rather_than_trusts_supplied_checksum
     source = UPDATE_FORMULA.read
     assert_match(/!=|-ne\b|mismatch/i, source,
@@ -97,6 +113,23 @@ class WorkflowBehaviorTest < Minitest::Test
 
   def test_build_bottles_validates_version_input
     assert_has_stable_release_validation(BUILD_BOTTLES)
+  end
+
+  def test_build_bottles_requires_tag_formula_and_checksum_before_any_build
+    source = BUILD_BOTTLES.read
+    tag_gate_index = source.index(/git ls-remote --exit-code --tags/)
+    formula_gate_index = source.index(/formula_version == version/)
+    checksum_gate_index = source.index(/COMPUTED_SHA256.*!=.*FORMULA_SHA256/)
+    build_index = source.index(/brew install --build-bottle/)
+
+    refute_nil tag_gate_index, "bottle workflow must explicitly require the upstream release tag"
+    refute_nil formula_gate_index
+    refute_nil checksum_gate_index
+    refute_nil build_index
+    assert tag_gate_index < formula_gate_index
+    assert formula_gate_index < checksum_gate_index
+    assert checksum_gate_index < build_index,
+           "tag, formula metadata, and canonical source checksum must gate every bottle build"
   end
 
   def test_workflows_derive_branches_and_release_tags_from_validated_outputs
@@ -142,7 +175,7 @@ class WorkflowBehaviorTest < Minitest::Test
     refute_match(/brew\s+bottle[^\n]*--keep-old/, source,
                  "a new source version must not preserve bottle metadata from the prior version")
     assert_match(/still contains bottle metadata from a prior release/, source,
-                 "collect must fail closed if the version-update PR did not remove the old bottle block")
+                 "validation must fail closed if the version-update PR did not remove the old bottle block")
     assert_match(/ACTUAL_JSON_COUNT/, source)
     assert_match(/ACTUAL_TARBALL_COUNT/, source)
     assert_match(/must describe exactly one bottle tag/, BOTTLE_VALIDATOR.read,
@@ -337,6 +370,8 @@ class WorkflowBehaviorTest < Minitest::Test
                  "must compare the formula's url version against the requested version")
     assert_match(/metadata\["sha256"\]\s*==\s*formula_sha256/, source,
                  "must compare release-metadata.json's sha256 against ferrite.rb's sha256")
+    assert_match(/formula\.match\?\(\/\^  bottle do\$\/\)/, source,
+                 "pre-build validation must reject stale bottle metadata before spending matrix build time")
   end
 
   def test_build_bottles_recomputes_canonical_checksum_before_building

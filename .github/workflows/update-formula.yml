@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Ferrite version (e.g. 0.4.0)"
+        description: "Ferrite version (next planned release: 0.5.0)"
         required: true
       sha256:
         description: "Advisory SHA256 of the release tarball (verified, never trusted blindly - the workflow always (re)computes the canonical checksum itself and fails if this does not match)"
@@ -70,6 +70,23 @@ jobs:
             echo "supplied_sha256=${SUPPLIED_SHA256}"
           } >> "$GITHUB_OUTPUT"
 
+      # Formula metadata cannot be prepared from a planned version alone.
+      # The exact upstream tag is a hard dependency: until it exists there
+      # is no canonical archive to hash and the live formula must remain on
+      # its current release.
+      - name: Require the upstream release tag
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if ! git ls-remote --exit-code --tags \
+            https://github.com/ferritelabs/ferrite.git \
+            "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            echo "::error::Upstream tag ${RELEASE_TAG} does not exist. Publish the core Ferrite tag before updating formula version/checksum metadata."
+            exit 1
+          fi
+          echo "Verified upstream tag ${RELEASE_TAG}"
+
       # The canonical checksum is *always* recomputed from the real
       # tagged archive. A caller-supplied sha256 (from workflow_dispatch
       # or repository_dispatch) is only ever used as an advisory
@@ -125,6 +142,7 @@ jobs:
           body: |
             Automated formula update for Ferrite ${{ steps.release.outputs.release_tag }}.
 
+            Upstream tag dependency: verified before download.
             Canonical SHA256 (recomputed from the tagged archive, not trusted
             from the triggering event): `${{ steps.checksum.outputs.sha256 }}`
           branch: ${{ steps.release.outputs.formula_branch }}

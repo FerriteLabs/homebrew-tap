@@ -3,5 +3,18 @@
   "sha256": "b4db8cc8eb0d3c2cef4a019a47d550c347df69fb8a4f77550c814fae463005cf",
   "url": "https://github.com/ferritelabs/ferrite/archive/refs/tags/v0.4.0.tar.gz",
   "updated_at": "2026-08-04T05:14:31Z",
-  "updated_by": "manual (initial canonical metadata; subsequent updates are written atomically alongside ferrite.rb by update-formula.yml)"
+  "updated_by": "manual (initial canonical metadata; subsequent updates are written atomically alongside ferrite.rb by update-formula.yml)",
+  "next_release": {
+    "version": "0.5.0",
+    "upstream_tag": "v0.5.0",
+    "status": "awaiting_upstream_tag",
+    "formula_update_workflow": "update-formula.yml",
+    "bottle_workflow": "build-bottles.yml",
+    "blockers": [
+      {
+        "id": "docs-hosting",
+        "description": "Deploy and verify the GitHub Pages documentation fallback, or a verified owned domain, before replacing temporary ferrite-docs repository links."
+      }
+    ]
+  }
 }

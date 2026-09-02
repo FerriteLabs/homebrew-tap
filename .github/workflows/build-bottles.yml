@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Ferrite version (e.g., 0.4.0)"
+        description: "Ferrite version (next planned release: 0.5.0)"
         required: true
         type: string
   repository_dispatch:
@@ -59,6 +59,19 @@ jobs:
             echo "bottle_release_url=https://github.com/ferritelabs/homebrew-tap/releases/download/v${VERSION}"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Require the upstream release tag
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if ! git ls-remote --exit-code --tags \
+            https://github.com/ferritelabs/ferrite.git \
+            "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            echo "::error::Upstream tag ${RELEASE_TAG} does not exist. Bottles require a published core tag and a merged formula update."
+            exit 1
+          fi
+          echo "Verified upstream tag ${RELEASE_TAG}"
+
       # Bottles must never be built for a formula that has not actually
       # been updated to the requested release yet: ferrite.rb's url
       # version, its sha256, and release-metadata.json's version/sha256/
@@ -97,6 +110,11 @@ jobs:
             sha_match = formula.match(/^\s*sha256\s+"([0-9a-f]{64})"/)
             abort "::error::could not find a well-formed source sha256 stanza in ferrite.rb" unless sha_match
             formula_sha256 = sha_match[1]
+
+            if formula.match?(/^  bottle do$/)
+              abort "::error::ferrite.rb still contains bottle metadata from a prior release; " \
+                    "run and merge update-formula.yml before starting any bottle builds"
+            end
 
             unless formula_version == version
               abort "::error::requested version (#{version}) does not match ferrite.rb's url version " \

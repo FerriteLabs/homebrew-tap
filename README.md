@@ -104,20 +104,25 @@ To create your own tap:
    curl -sL https://github.com/ferritelabs/ferrite/archive/refs/tags/v0.2.0.tar.gz | shasum -a 256
    ```
 
-> **Note:** In the official FerriteLabs tap, SHA256 checksums and bottle hashes are automatically updated by CI workflows when a new release is tagged. The placeholder values in `ferrite.rb` are replaced by the `update-formula` and `build-bottles` workflows. If installing from source before bottles are built, use `brew install --build-from-source ferrite`.
+> **Note:** Release checksums and bottle hashes are never placeholders. After an upstream Ferrite tag exists, `update-formula.yml` downloads the tagged archive and computes its checksum. Only after that formula update is merged may `build-bottles.yml` build, verify, and publish bottle artifacts. If no bottle exists for your platform, Homebrew builds from source.
 
 ## Updating the Formula
 
-When releasing a new version:
+Ferrite 0.5.0 is the next planned ecosystem release. The live formula remains on 0.4.0 until the upstream `ferritelabs/ferrite` `v0.5.0` tag exists.
 
-1. Run `update-formula.yml` with the release version (and optional advisory
-   checksum)
-2. Review and merge the generated formula-update pull request
-3. Run `build-bottles.yml` for the merged version
-4. Review and merge the generated bottle-metadata pull request
+Release blocker:
 
-Both workflows validate their inputs and keep formula changes in the normal
-pull-request review flow.
+- [ ] Deploy and verify the GitHub Pages documentation fallback, or a verified owned domain, before replacing the temporary `https://github.com/ferritelabs/ferrite-docs` references in the formula caveats and public documentation.
+
+Release order:
+
+1. Publish the upstream `ferritelabs/ferrite` `v0.5.0` tag.
+2. Run `update-formula.yml` with version `0.5.0` (and an optional advisory checksum). The workflow requires the tag, downloads its archive, and computes the canonical checksum itself.
+3. Review and merge the generated formula/metadata pull request.
+4. Run `build-bottles.yml` for `0.5.0`. Its pre-build gate requires the live formula and metadata to match the tagged archive and checksum.
+5. Review and merge the generated bottle-metadata pull request. Bottle hashes come only from the verified artifacts produced by that workflow.
+
+Both workflows validate their inputs and keep formula changes in the normal pull-request review flow. Do not edit the live formula version, source checksum, or bottle hashes before those gates succeed.
 
 ## Submitting to homebrew-core
 

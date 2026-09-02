@@ -15,9 +15,23 @@ class ReleaseMetadataTest < Minitest::Test
     end
   end
 
-  def test_metadata_uses_current_stable_release_0_4_0
-    assert_equal "0.4.0", @metadata["version"]
+  def test_live_metadata_uses_a_valid_release_version
     assert_equal @metadata["version"], FerriteTap::ReleaseVersion.validate!(@metadata["version"])
+  end
+
+  def test_optional_planned_release_does_not_fabricate_release_artifacts
+    planned = @metadata["next_release"]
+    return if planned.nil?
+
+    planned_version = FerriteTap::ReleaseVersion.validate!(planned.fetch("version"))
+    assert_equal "v#{planned_version}", planned["upstream_tag"]
+    assert_equal "awaiting_upstream_tag", planned["status"]
+    assert_equal "update-formula.yml", planned["formula_update_workflow"]
+    assert_equal "build-bottles.yml", planned["bottle_workflow"]
+    assert_equal 1, planned_version.split(".").map(&:to_i) <=> @metadata["version"].split(".").map(&:to_i)
+    assert_kind_of Array, planned.fetch("blockers", [])
+    refute planned.key?("sha256"), "planned release metadata must not fabricate a source checksum"
+    refute planned.key?("bottles"), "planned release metadata must not fabricate bottle hashes"
   end
 
   def test_metadata_url_is_derived_from_the_strictly_validated_version
