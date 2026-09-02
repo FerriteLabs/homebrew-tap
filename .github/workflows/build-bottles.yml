@@ -262,6 +262,17 @@ jobs:
 
           echo "Verified bottle tag '${ACTUAL_TAG}' and filename '${EXPECTED_TARBALL}' for ${{ matrix.os }}"
 
+      - name: Reinstall and test generated bottle
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          EXPECTED_TAG: ${{ matrix.expected_tag }}
+        run: |
+          set -euo pipefail
+          BOTTLE_TARBALL="ferrite--${VERSION}.${EXPECTED_TAG}.bottle.tar.gz"
+          brew uninstall --force ferritelabs/ci/ferrite
+          brew install --force-bottle "./${BOTTLE_TARBALL}"
+          brew test ferritelabs/ci/ferrite
+
       - name: Upload bottle artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -318,22 +329,12 @@ jobs:
               exit 1
             fi
 
-            ruby -rjson -e '
-              path, version, expected_tag, expected_root_url = ARGV
-              data = JSON.parse(File.read(path))
-              abort "::error::#{path} must describe exactly one formula" unless data.length == 1
-              formula = data.values.first
-              bottle = formula.fetch("bottle")
-              tags = bottle.fetch("tags")
-              abort "::error::#{path} must describe exactly one bottle tag" unless tags.keys == [expected_tag]
-              abort "::error::#{path} has root_url #{bottle["root_url"].inspect}, expected #{expected_root_url}" \
-                unless bottle["root_url"] == expected_root_url
-              sha256 = tags.fetch(expected_tag).fetch("sha256")
-              abort "::error::#{path} has an invalid bottle checksum" unless sha256.match?(/\A[0-9a-f]{64}\z/)
-              pkg_version = formula.fetch("formula").fetch("pkg_version")
-              abort "::error::#{path} has package version #{pkg_version.inspect}, expected #{version}" \
-                unless pkg_version == version
-            ' "${EXPECTED_JSON}" "${VERSION}" "${tag}" "${BOTTLE_RELEASE_URL}"
+            ruby scripts/validate_bottle_artifact.rb \
+              "${EXPECTED_JSON}" \
+              "${EXPECTED_TARBALL}" \
+              "${VERSION}" \
+              "${tag}" \
+              "${BOTTLE_RELEASE_URL}"
           done
 
           echo "Validated the complete ${ACTUAL_JSON_COUNT}-platform bottle set for: ${EXPECTED_TAGS}"

@@ -22,6 +22,7 @@ class WorkflowBehaviorTest < Minitest::Test
   CHECKSUM_TEST = FerriteTap::ROOT + "tests" + "formula_checksum_test.rb"
   FORMULA_UPDATER = FerriteTap::ROOT + "scripts" + "update_formula.rb"
   RELEASE_VERSION = FerriteTap::ROOT + "scripts" + "release_version.rb"
+  BOTTLE_VALIDATOR = FerriteTap::ROOT + "scripts" + "validate_bottle_artifact.rb"
 
   def test_workflow_files_exist
     assert UPDATE_FORMULA.file?
@@ -144,7 +145,7 @@ class WorkflowBehaviorTest < Minitest::Test
                  "collect must fail closed if the version-update PR did not remove the old bottle block")
     assert_match(/ACTUAL_JSON_COUNT/, source)
     assert_match(/ACTUAL_TARBALL_COUNT/, source)
-    assert_match(/must describe exactly one bottle tag/, source,
+    assert_match(/must describe exactly one bottle tag/, BOTTLE_VALIDATOR.read,
                  "each bottle JSON must be validated before the complete set is merged")
     assert_match(/actual == expected/, source,
                  "the written formula bottle block must exactly match the validated JSON set")
@@ -168,6 +169,45 @@ class WorkflowBehaviorTest < Minitest::Test
     refute_match(/cp\s+ferrite\.rb\s+"\$\{TAPPED_FORMULA\}"/, source,
                  "collect must never copy the (unmerged) checkout formula over the merged tapped " \
                  "formula - that would silently discard the merge result")
+  end
+
+  def test_build_bottles_verifies_each_tarball_against_its_json_checksum
+    source = BUILD_BOTTLES.read
+    validator_index = source.index(/ruby scripts\/validate_bottle_artifact\.rb/)
+    merge_index = source.index(/brew bottle --merge --write --no-commit/)
+
+    refute_nil validator_index,
+               "collect must validate every downloaded bottle JSON/tarball pair"
+    refute_nil merge_index
+    validator = BOTTLE_VALIDATOR.read
+    assert_match(/Digest::SHA256\.file\(tarball_path\)\.hexdigest/, validator,
+                 "the validator must recompute the downloaded bottle tarball checksum")
+    assert_match(/sha256 == actual_sha256/, validator,
+                 "the generated bottle JSON checksum must match the downloaded tarball")
+    assert_match(/Zlib::GzipReader\.open\(tarball_path\)/, validator,
+                 "the validator must reject files that are not readable gzip archives")
+    assert_match(%r{/bin/ferrite}, validator,
+                 "the validator must require the Ferrite server binary")
+    assert_match(/INSTALL_RECEIPT\.json/, validator,
+                 "the validator must require the Homebrew installation receipt")
+    assert validator_index < merge_index,
+           "bottle artifacts must be checksum-verified before metadata is merged into the formula"
+  end
+
+  def test_bottle_job_reinstalls_and_tests_the_generated_artifact
+    doc = load_yaml(BUILD_BOTTLES)
+    bottle_steps = doc.dig("jobs", "bottle", "steps") || []
+    reinstall_index = bottle_steps.index { |step| step["name"] == "Reinstall and test generated bottle" }
+    upload_index = bottle_steps.index { |step| step["name"] == "Upload bottle artifacts" }
+
+    refute_nil reinstall_index
+    refute_nil upload_index
+    script = bottle_steps.fetch(reinstall_index).fetch("run")
+    assert_match(/brew uninstall --force ferritelabs\/ci\/ferrite/, script)
+    assert_match(%r{brew install --force-bottle "\./\$\{BOTTLE_TARBALL\}"}, script)
+    assert_match(/brew test ferritelabs\/ci\/ferrite/, script)
+    assert reinstall_index < upload_index,
+           "the locally generated bottle must install and pass its formula test before upload"
   end
 
   # The bottle-build matrix must never install/bottle a bare path
