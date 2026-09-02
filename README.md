@@ -1,4 +1,4 @@
-# Homebrew Tap Tap for Ferrite
+# Homebrew Tap for Ferrite
 
 [![CI](https://github.com/ferritelabs/homebrew-tap/actions/workflows/ci.yml/badge.svg)](https://github.com/ferritelabs/homebrew-tap/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
@@ -17,15 +17,13 @@ This directory contains the Homebrew formula for installing Ferrite on macOS and
 > build from source automatically.
 ### From Official Tap (Recommended)
 
-Once published, you can install Ferrite using:
+Install Ferrite from the official tap:
 
 ```bash
-# Add the tap
-brew tap ferritelabs/ferrite
-
-# Install Ferrite
-brew install ferrite
+brew install ferritelabs/tap/ferrite
 ```
+
+Homebrew adds `ferritelabs/tap` automatically when the fully qualified formula name is used.
 
 ### Prebuilt Release Script
 
@@ -39,10 +37,11 @@ Set `FERRITE_INSTALL_DIR` to customize the install location.
 
 ### From Local Formula
 
-For development or testing, install directly from this formula:
+For development or testing, tap this checkout under the same deterministic name used by CI:
 
 ```bash
-brew install --build-from-source ./homebrew/ferrite.rb
+brew tap ferritelabs/ci "$(pwd)"
+brew install --build-from-source ferritelabs/ci/ferrite
 ```
 
 ## Usage
@@ -69,7 +68,7 @@ If this is your first time installing Ferrite, note the following caveats:
 
 1. **Default port**: Ferrite listens on port 6379 by default, the same as Redis. If you have Redis running, stop it first or configure Ferrite to use a different port.
 2. **Data directory**: Ferrite stores its data in `$(brew --prefix)/var/lib/ferrite/`. Ensure this directory has adequate disk space for your workload.
-3. **Configuration**: A default configuration file is placed at `$(brew --prefix)/etc/ferrite/ferrite.toml`. Review and customize it before running in production.
+3. **Configuration**: On first install, the installed `ferrite` binary generates a version-compatible configuration at `$(brew --prefix)/etc/ferrite/ferrite.toml`. Homebrew preserves that file during upgrades. Review and customize it before running in production.
 
 ## Service Management
 
@@ -199,6 +198,5 @@ If you encounter linker errors referencing OpenSSL during build:
 ```bash
 brew reinstall openssl@3
 export OPENSSL_DIR=$(brew --prefix openssl@3)
-brew install --build-from-source ferrite
+brew install --build-from-source ferritelabs/tap/ferrite
 ```
-

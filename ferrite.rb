@@ -5,7 +5,7 @@
 # with agent memory and an optional WASM in-DB function runtime (Forge).
 class Ferrite < Formula
   desc "Redis-compatible tiered-storage key-value store with agent memory and WASM"
-  homepage "https://ferrite.rs"
+  homepage "https://github.com/ferritelabs/ferrite"
   url "https://github.com/ferritelabs/ferrite/archive/refs/tags/v0.4.0.tar.gz"
   # SHA256 of the v0.4.0 release tarball, verified against the upstream
   # GitHub archive. To recompute manually: curl -sL <url> | shasum -a 256
@@ -47,11 +47,41 @@ class Ferrite < Formula
     # Install man pages if they exist
     man1.install Dir["docs/man/*.1"] if Dir.exist?("docs/man")
 
-    # Install example configuration as default config
-    (etc/"ferrite").install "ferrite.example.toml" => "ferrite.toml" if File.exist?("ferrite.example.toml")
-
     # Install shell completions
     generate_completions_from_executable(bin/"ferrite", "completions")
+  end
+
+  def post_install
+    config_dir = etc/"ferrite"
+    config_file = config_dir/"ferrite.toml"
+    return if config_file.exist?
+
+    write_generated_config(config_file, var/"lib/ferrite")
+  end
+
+  def write_generated_config(config_file, data_dir)
+    config_file.dirname.mkpath
+    temporary = config_file.dirname/".ferrite.toml.tmp-#{Process.pid}"
+    temporary.unlink if temporary.exist?
+
+    system bin/"ferrite", "init",
+           "--output", temporary,
+           "--data-dir", data_dir
+
+    content = temporary.read
+    raise "ferrite init produced an empty configuration" if content.empty?
+
+    unavailable_docs_url = "https://ferrite" + ".dev/docs/reference/configuration"
+    content = content.gsub(
+      unavailable_docs_url,
+      "https://github.com/ferritelabs/ferrite-docs",
+    )
+    raise "generated configuration contains an unavailable documentation URL" if content.match?(%r{https?://(?:www\.)?ferrite\.(?:dev|rs)})
+
+    temporary.write(content)
+    temporary.rename(config_file)
+  ensure
+    temporary&.unlink if temporary&.exist?
   end
 
   def caveats
@@ -69,6 +99,10 @@ class Ferrite < Formula
 
       Data directory: #{var}/lib/ferrite
       Logs directory: #{var}/log/ferrite
+      Configuration: #{etc}/ferrite/ferrite.toml
+
+      A version-compatible configuration is generated on first install.
+      Existing configuration is preserved during upgrades.
 
       To start ferrite as a background service:
         brew services start ferrite
@@ -76,8 +110,8 @@ class Ferrite < Formula
       To enable TLS for production deployments:
         ferrite --tls-cert-file /path/to/cert.pem --tls-key-file /path/to/key.pem
 
-      For more information:
-        https://ferrite.rs
+      Documentation:
+        https://github.com/ferritelabs/ferrite-docs
     EOS
   end
 
@@ -94,10 +128,17 @@ class Ferrite < Formula
     # Verify the binary runs and reports its version
     assert_match version.to_s, shell_output("#{bin}/ferrite --version")
 
+    # Generate configuration with the installed binary so the test tracks
+    # the exact configuration schema supported by this Ferrite version.
+    config = testpath/"ferrite.toml"
+    write_generated_config(config, testpath/"data")
+    assert_path_exists config
+    refute_match %r{https?://(?:www\.)?ferrite\.(?:dev|rs)}, config.read
+
     # Start server in background
     port = free_port
     server_pid = fork do
-      exec bin/"ferrite", "--port", port.to_s
+      exec bin/"ferrite", "--config", config, "--port", port.to_s
     end
 
     # Readiness polling and every assertion that depends on the server

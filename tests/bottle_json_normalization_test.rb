@@ -3,7 +3,6 @@
 require_relative "test_helper"
 require "open3"
 require "json"
-require "tmpdir"
 require "yaml"
 
 # Runtime proof for the collect job's bottle-JSON `formula.path`
@@ -77,7 +76,7 @@ class BottleJsonNormalizationTest < Minitest::Test
   end
 
   def test_normalizes_macos_runner_bottle_json_formula_path_to_tapped_formula
-    Dir.mktmpdir do |dir|
+    FerriteTap.with_temp_dir("bottle-json-") do |dir|
       json_path = write_fixture_json(dir, "ferrite--0.4.0.arm64_sequoia.bottle.json", FOREIGN_MACOS_CHECKOUT_PATH)
 
       tapped_formula = File.join(MACOS_RUNNER[:homebrew_repository], MACOS_RUNNER[:formula_path])
@@ -91,7 +90,7 @@ class BottleJsonNormalizationTest < Minitest::Test
   end
 
   def test_normalizes_linux_runner_bottle_json_formula_path_to_tapped_formula
-    Dir.mktmpdir do |dir|
+    FerriteTap.with_temp_dir("bottle-json-") do |dir|
       json_path = write_fixture_json(dir, "ferrite--0.4.0.x86_64_linux.bottle.json", FOREIGN_LINUX_CHECKOUT_PATH)
 
       tapped_formula = File.join(LINUX_RUNNER[:homebrew_repository], LINUX_RUNNER[:formula_path])
@@ -111,7 +110,7 @@ class BottleJsonNormalizationTest < Minitest::Test
   # `brew bottle --merge`'s file resolution deterministic no matter
   # which of the four per-platform JSON files is processed.
   def test_normalizes_mixed_macos_and_linux_fixtures_to_the_same_path_on_one_collect_runner
-    Dir.mktmpdir do |dir|
+    FerriteTap.with_temp_dir("bottle-json-") do |dir|
       macos_json = write_fixture_json(dir, "ferrite--0.4.0.arm64_sequoia.bottle.json", FOREIGN_MACOS_CHECKOUT_PATH)
       linux_json = write_fixture_json(dir, "ferrite--0.4.0.x86_64_linux.bottle.json", FOREIGN_LINUX_CHECKOUT_PATH)
 
@@ -154,7 +153,7 @@ class BottleJsonNormalizationTest < Minitest::Test
   end
 
   def test_copy_back_succeeds_when_tapped_formula_has_a_merged_bottle_block
-    Dir.mktmpdir do |dir|
+    FerriteTap.with_temp_dir("bottle-json-") do |dir|
       merged_content = "class Ferrite < Formula\n  bottle do\n    sha256 x: \"#{"a" * 64}\"\n  end\nend\n"
       _stdout, _stderr, status = run_confirm_and_copy_back(dir, tapped_formula_content: merged_content)
 
@@ -165,7 +164,7 @@ class BottleJsonNormalizationTest < Minitest::Test
   end
 
   def test_copy_back_refuses_when_tapped_formula_has_no_bottle_block
-    Dir.mktmpdir do |dir|
+    FerriteTap.with_temp_dir("bottle-json-") do |dir|
       unmerged_content = "class Ferrite < Formula\nend\n"
       stdout, _stderr, status = run_confirm_and_copy_back(dir, tapped_formula_content: unmerged_content)
 

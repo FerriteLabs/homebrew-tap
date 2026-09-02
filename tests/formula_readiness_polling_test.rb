@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
-require "tmpdir"
 require "fileutils"
 
 # Runtime proof for the server-readiness polling fix.
@@ -101,7 +100,7 @@ class FormulaReadinessPollingTest < Minitest::Test
   end
 
   def test_extracted_retry_loop_becomes_ready_after_transient_failures_without_raising
-    Dir.mktmpdir do |dir|
+    FerriteTap.with_temp_dir("readiness-") do |dir|
       cli_path, counter_path = write_fake_cli(dir, 2)
       times, retry_body = extracted_retry_loop_source
 
@@ -131,7 +130,7 @@ class FormulaReadinessPollingTest < Minitest::Test
   end
 
   def test_extracted_retry_loop_exhausts_retries_when_command_never_succeeds
-    Dir.mktmpdir do |dir|
+    FerriteTap.with_temp_dir("readiness-") do |dir|
       cli_path, counter_path = write_fake_cli(dir, 999)
       times, retry_body = extracted_retry_loop_source
 

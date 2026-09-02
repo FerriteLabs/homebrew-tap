@@ -9,6 +9,8 @@
 require "minitest/autorun"
 require "pathname"
 require "json"
+require "fileutils"
+require "tmpdir"
 require_relative "../scripts/release_version"
 
 module FerriteTap
@@ -35,5 +37,13 @@ module FerriteTap
     metadata = JSON.parse(RELEASE_METADATA_PATH.read)
     ReleaseVersion.validate!(metadata.fetch("version"))
     metadata
+  end
+
+  def self.with_temp_dir(prefix = "fixture-")
+    workspace = ROOT + ".test-workspaces"
+    workspace.mkpath
+    Dir.mktmpdir(prefix, workspace.to_s) { |directory| yield directory }
+  ensure
+    FileUtils.rmdir(workspace) if workspace&.directory? && workspace.children.empty?
   end
 end

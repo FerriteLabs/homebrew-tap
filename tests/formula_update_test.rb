@@ -4,7 +4,6 @@ require_relative "test_helper"
 require_relative "../scripts/update_formula"
 require "json"
 require "open3"
-require "tmpdir"
 
 class FormulaUpdateTest < Minitest::Test
   OLD_SHA256 = "1" * 64
@@ -115,7 +114,7 @@ class FormulaUpdateTest < Minitest::Test
   end
 
   def test_workflow_updater_replaces_formula_and_metadata_files
-    Dir.mktmpdir do |directory|
+    FerriteTap.with_temp_dir("formula-update-") do |directory|
       formula_path = File.join(directory, "ferrite.rb")
       metadata_path = File.join(directory, "release-metadata.json")
       File.write(formula_path, <<~RUBY)
