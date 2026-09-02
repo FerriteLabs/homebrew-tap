@@ -128,7 +128,7 @@ class FormulaStructureTest < Minitest::Test
                  "upgrades must preserve an existing user configuration")
     assert_match(/write_generated_config\(config_file,\s*var\s*\/\s*"lib\/ferrite"\)/m, body)
 
-    generator_match = @source.match(/def write_generated_config\(config_file, data_dir\)(.*?)\n\s*end\n/m)
+    generator_match = @source.match(/def write_generated_config\(config_file, data_dir\)(.*?)(?=\n\s*def caveats)/m)
     refute_nil generator_match, "formula must define one generated-config transaction"
     generator = generator_match[1]
     assert_match(/config_file\.dirname\.mkpath/, generator)

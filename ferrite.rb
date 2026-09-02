@@ -71,12 +71,16 @@ class Ferrite < Formula
     content = temporary.read
     raise "ferrite init produced an empty configuration" if content.empty?
 
-    unavailable_docs_url = "https://ferrite" + ".dev/docs/reference/configuration"
+    unavailable_docs_domain = %w[ferrite dev].join(".")
+    unavailable_docs_url = "https://#{unavailable_docs_domain}/docs/reference/configuration"
     content = content.gsub(
       unavailable_docs_url,
       "https://github.com/ferritelabs/ferrite-docs",
     )
-    raise "generated configuration contains an unavailable documentation URL" if content.match?(%r{https?://(?:www\.)?ferrite\.(?:dev|rs)})
+    unavailable_url = content.match?(%r{https?://(?:www\.)?ferrite\.(?:dev|rs)})
+    if unavailable_url
+      raise "generated configuration contains an unavailable documentation URL"
+    end
 
     temporary.write(content)
     temporary.rename(config_file)
