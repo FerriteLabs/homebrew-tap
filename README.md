@@ -1,4 +1,4 @@
-# Homebrew Tap Tap for Ferrite
+# Homebrew Tap for Ferrite
 
 [![CI](https://github.com/ferritelabs/homebrew-tap/actions/workflows/ci.yml/badge.svg)](https://github.com/ferritelabs/homebrew-tap/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
@@ -7,19 +7,23 @@ This directory contains the Homebrew formula for installing Ferrite on macOS and
 
 ## Installation
 
-> **Note:** Pre-built bottles are available for macOS (Apple Silicon and Intel) and Linux x86_64.
-> If no bottle is available for your platform, Homebrew will build from source automatically.
+> **Note:** Pre-built bottles are built for a small, deliberately real
+> (not padded) set of platforms: macOS Sequoia on Apple Silicon
+> (`arm64_sequoia`) and Intel (`sequoia`), macOS Sonoma on Apple Silicon
+> as a legacy target (`arm64_sonoma`), and Linux x86_64 (`x86_64_linux`).
+> See `.github/workflows/build-bottles.yml` for the exact, currently
+> supported matrix - it is updated as GitHub's hosted runner images
+> change. If no bottle is available for your platform, Homebrew will
+> build from source automatically.
 ### From Official Tap (Recommended)
 
-Once published, you can install Ferrite using:
+Install Ferrite from the official tap:
 
 ```bash
-# Add the tap
-brew tap ferritelabs/ferrite
-
-# Install Ferrite
-brew install ferrite
+brew install ferritelabs/tap/ferrite
 ```
+
+Homebrew adds `ferritelabs/tap` automatically when the fully qualified formula name is used.
 
 ### Prebuilt Release Script
 
@@ -33,10 +37,11 @@ Set `FERRITE_INSTALL_DIR` to customize the install location.
 
 ### From Local Formula
 
-For development or testing, install directly from this formula:
+For development or testing, tap this checkout under the same deterministic name used by CI:
 
 ```bash
-brew install --build-from-source ./homebrew/ferrite.rb
+brew tap ferritelabs/ci "$(pwd)"
+brew install --build-from-source ferritelabs/ci/ferrite
 ```
 
 ## Usage
@@ -63,7 +68,7 @@ If this is your first time installing Ferrite, note the following caveats:
 
 1. **Default port**: Ferrite listens on port 6379 by default, the same as Redis. If you have Redis running, stop it first or configure Ferrite to use a different port.
 2. **Data directory**: Ferrite stores its data in `$(brew --prefix)/var/lib/ferrite/`. Ensure this directory has adequate disk space for your workload.
-3. **Configuration**: A default configuration file is placed at `$(brew --prefix)/etc/ferrite/ferrite.toml`. Review and customize it before running in production.
+3. **Configuration**: On first install, the installed `ferrite` binary generates a version-compatible configuration at `$(brew --prefix)/etc/ferrite/ferrite.toml`. Homebrew preserves that file during upgrades. Review and customize it before running in production.
 
 ## Service Management
 
@@ -99,16 +104,25 @@ To create your own tap:
    curl -sL https://github.com/ferritelabs/ferrite/archive/refs/tags/v0.2.0.tar.gz | shasum -a 256
    ```
 
-> **Note:** In the official FerriteLabs tap, SHA256 checksums and bottle hashes are automatically updated by CI workflows when a new release is tagged. The placeholder values in `ferrite.rb` are replaced by the `update-formula` and `build-bottles` workflows. If installing from source before bottles are built, use `brew install --build-from-source ferrite`.
+> **Note:** Release checksums and bottle hashes are never placeholders. After an upstream Ferrite tag exists, `update-formula.yml` downloads the tagged archive and computes its checksum. Only after that formula update is merged may `build-bottles.yml` build, verify, and publish bottle artifacts. If no bottle exists for your platform, Homebrew builds from source.
 
 ## Updating the Formula
 
-When releasing a new version:
+Ferrite 0.5.0 is the next planned ecosystem release. The live formula remains on 0.4.0 until the upstream `ferritelabs/ferrite` `v0.5.0` tag exists.
 
-1. Update the `url` with the new version tag
-2. Update the `sha256` hash
-3. Test the formula: `brew install --build-from-source ferrite.rb`
-4. Submit a PR or push to your tap
+Release blocker:
+
+- [ ] Deploy and verify the GitHub Pages documentation fallback, or a verified owned domain, before replacing the temporary `https://github.com/ferritelabs/ferrite-docs` references in the formula caveats and public documentation.
+
+Release order:
+
+1. Publish the upstream `ferritelabs/ferrite` `v0.5.0` tag.
+2. Run `update-formula.yml` with version `0.5.0` (and an optional advisory checksum). The workflow requires the tag, downloads its archive, and computes the canonical checksum itself.
+3. Review and merge the generated formula/metadata pull request.
+4. Run `build-bottles.yml` for `0.5.0`. Its pre-build gate requires the live formula and metadata to match the tagged archive and checksum.
+5. Review and merge the generated bottle-metadata pull request. Bottle hashes come only from the verified artifacts produced by that workflow.
+
+Both workflows validate their inputs and keep formula changes in the normal pull-request review flow. Do not edit the live formula version, source checksum, or bottle hashes before those gates succeed.
 
 ## Submitting to homebrew-core
 
@@ -189,7 +203,5 @@ If you encounter linker errors referencing OpenSSL during build:
 ```bash
 brew reinstall openssl@3
 export OPENSSL_DIR=$(brew --prefix openssl@3)
-brew install --build-from-source ferrite
+brew install --build-from-source ferritelabs/tap/ferrite
 ```
-
-

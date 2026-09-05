@@ -7,6 +7,7 @@
 
 # Coverage
 coverage/
+.test-workspaces/
 
 # IDE / Editor
 .idea/

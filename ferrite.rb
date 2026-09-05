@@ -1,60 +1,39 @@
 # typed: false
 # frozen_string_literal: true
 
+# Formula for Ferrite: a Redis-compatible, tiered-storage key-value store
+# with agent memory and an optional WASM in-DB function runtime (Forge).
 class Ferrite < Formula
-  desc "High-performance, tiered-storage key-value store - drop-in Redis replacement with agent memory, WASM functions, and verifiable audit"
-  homepage "https://ferrite.rs"
-  url "https://github.com/ferritelabs/ferrite/archive/refs/tags/v0.3.0.tar.gz"
-  # SHA256 is automatically updated by the update-formula workflow when a new
-  # tag is pushed to ferritelabs/ferrite. To compute manually:
-  #   curl -sL <url> | shasum -a 256
-  # Verify checksum after download: brew fetch --verify-sha ferrite
-  #
-  # To update: run the update-formula workflow with the new version and SHA256,
-  # or trigger a repository_dispatch event from the ferrite release workflow.
-  # Placeholder below is replaced by CI on release.
-  sha256 "PLACEHOLDER_SOURCE_SHA256_REPLACE_VIA_CI_RELEASE_WORKFLOW_000000000000"
+  desc "Redis-compatible tiered-storage key-value store with agent memory and WASM"
+  homepage "https://github.com/ferritelabs/ferrite"
+  url "https://github.com/ferritelabs/ferrite/archive/refs/tags/v0.4.0.tar.gz"
+  # SHA256 of the v0.4.0 release tarball, verified against the upstream
+  # GitHub archive. To recompute manually: curl -sL <url> | shasum -a 256
+  # This value is kept in sync by the update-formula workflow, which
+  # recomputes the canonical checksum itself rather than trusting inputs.
+  sha256 "b4db8cc8eb0d3c2cef4a019a47d550c347df69fb8a4f77550c814fae463005cf"
   license "Apache-2.0"
-
-  depends_on "openssl@3"
 
   head "https://github.com/ferritelabs/ferrite.git", branch: "main"
 
   livecheck do
     url :stable
     strategy :github_latest
-    regex(/v?(\d+(?:\.\d+)+)/i)
+    regex(/^v?((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/i)
   end
-
-  bottle do
-    root_url "https://github.com/ferritelabs/homebrew-tap/releases/download/v#{version}"
-    # Bottles are built and uploaded by the build-bottles workflow.
-    # After a release, run: brew fetch --force ferrite
-    # Bottle checksums are updated by the build-bottles CI workflow.
-    #
-    # ⚠️  Values below are PLACEHOLDERS — CI replaces them when bottles are built.
-    # If you see these exact values, bottles have not been built for this version yet.
-    # Install from source instead: brew install --build-from-source ferrite
-    sha256 cellar: :any_skip_relocation, arm64_sonoma:  "PLACEHOLDER_SHA256_ARM64_SONOMA_REPLACE_VIA_CI_WORKFLOW"
-    sha256 cellar: :any_skip_relocation, arm64_ventura: "PLACEHOLDER_SHA256_ARM64_VENTURA_REPLACE_VIA_CI_WORKFLOW"
-    sha256 cellar: :any_skip_relocation, arm64_sequoia: "PLACEHOLDER_SHA256_ARM64_SEQUOIA_REPLACE_VIA_CI_WORKFLOW"
-    sha256 cellar: :any_skip_relocation, sonoma:        "PLACEHOLDER_SHA256_SONOMA_REPLACE_VIA_CI_WORKFLOW_00000"
-    sha256 cellar: :any_skip_relocation, ventura:       "PLACEHOLDER_SHA256_VENTURA_REPLACE_VIA_CI_WORKFLOW_0000"
-    sha256 cellar: :any_skip_relocation, x86_64_linux:  "PLACEHOLDER_SHA256_X86_64_LINUX_REPLACE_VIA_CI_WORKFLOW"
-  end
-
-  depends_on "rust" => :build
-  depends_on "pkg-config" => :build
-  depends_on "cmake" => :build
-  # Runtime dependency for TLS support
-  # On macOS, prefer the Homebrew-installed OpenSSL over system LibreSSL
-  depends_on "openssl@3" if OS.mac?
-  depends_on "openssl@3" if OS.linux?
-  uses_from_macos "curl"
 
   option "with-forge", "Enable Forge WASM in-DB function runtime (ADR-019)"
 
-  # Minimum Rust version: 1.88 (required for async trait and io_uring support)
+  depends_on "cmake" => :build
+  depends_on "pkg-config" => :build
+  depends_on "rust" => :build
+  # Runtime dependency for TLS support on every supported platform.
+  # On macOS, prefer the Homebrew-installed OpenSSL over system LibreSSL.
+  depends_on "openssl@3"
+  uses_from_macos "curl"
+
+  # Minimum Rust version is declared upstream via Cargo.toml rust-version;
+  # see https://github.com/ferritelabs/ferrite/blob/v0.4.0/Cargo.toml
   def install
     features = "tls,cli"
     features += ",forge-runtime" if build.with?("forge")
@@ -68,21 +47,45 @@ class Ferrite < Formula
     # Install man pages if they exist
     man1.install Dir["docs/man/*.1"] if Dir.exist?("docs/man")
 
-    # Install example configuration as default config
-    if File.exist?("ferrite.example.toml")
-      (etc/"ferrite").install "ferrite.example.toml" => "ferrite.toml"
-    end
-
     # Install shell completions
     generate_completions_from_executable(bin/"ferrite", "completions")
   end
 
   def post_install
-    # Create data directory
-    (var/"lib/ferrite").mkpath
+    config_dir = etc/"ferrite"
+    config_file = config_dir/"ferrite.toml"
+    return if config_file.exist?
 
-    # Create log directory
-    (var/"log/ferrite").mkpath
+    write_generated_config(config_file, var/"lib/ferrite")
+  end
+
+  def write_generated_config(config_file, data_dir)
+    config_file.dirname.mkpath
+    temporary = config_file.dirname/".ferrite.toml.tmp-#{Process.pid}"
+    temporary.unlink if temporary.exist?
+
+    system bin/"ferrite", "init",
+           "--output", temporary,
+           "--data-dir", data_dir
+
+    content = temporary.read
+    raise "ferrite init produced an empty configuration" if content.empty?
+
+    unavailable_docs_domain = %w[ferrite dev].join(".")
+    unavailable_docs_url = "https://#{unavailable_docs_domain}/docs/reference/configuration"
+    content = content.gsub(
+      unavailable_docs_url,
+      "https://github.com/ferritelabs/ferrite-docs",
+    )
+    unavailable_url = content.match?(%r{https?://(?:www\.)?ferrite\.(?:dev|rs)})
+    if unavailable_url
+      raise "generated configuration contains an unavailable documentation URL"
+    end
+
+    temporary.write(content)
+    temporary.rename(config_file)
+  ensure
+    temporary&.unlink if temporary&.exist?
   end
 
   def caveats
@@ -100,6 +103,10 @@ class Ferrite < Formula
 
       Data directory: #{var}/lib/ferrite
       Logs directory: #{var}/log/ferrite
+      Configuration: #{etc}/ferrite/ferrite.toml
+
+      A version-compatible configuration is generated on first install.
+      Existing configuration is preserved during upgrades.
 
       To start ferrite as a background service:
         brew services start ferrite
@@ -107,8 +114,8 @@ class Ferrite < Formula
       To enable TLS for production deployments:
         ferrite --tls-cert-file /path/to/cert.pem --tls-key-file /path/to/key.pem
 
-      For more information:
-        https://ferrite.rs
+      Documentation:
+        https://github.com/ferritelabs/ferrite-docs
     EOS
   end
 
@@ -125,20 +132,52 @@ class Ferrite < Formula
     # Verify the binary runs and reports its version
     assert_match version.to_s, shell_output("#{bin}/ferrite --version")
 
+    # Generate configuration with the installed binary so the test tracks
+    # the exact configuration schema supported by this Ferrite version.
+    config = testpath/"ferrite.toml"
+    write_generated_config(config, testpath/"data")
+    assert_path_exists config
+    refute_match %r{https?://(?:www\.)?ferrite\.(?:dev|rs)}, config.read
+
     # Start server in background
     port = free_port
     server_pid = fork do
-      exec bin/"ferrite", "--port", port.to_s
+      exec bin/"ferrite", "--config", config, "--port", port.to_s
     end
 
-    # Wait for server to be ready (retry up to 10 times)
-    10.times do
-      break if shell_output("#{bin}/ferrite-cli -p #{port} PING 2>&1", 0).include?("PONG")
-
-      sleep 1
-    end
-
+    # Readiness polling and every assertion that depends on the server
+    # live inside this single begin/ensure so the forked server_pid is
+    # *always* terminated and reaped, whether the server never becomes
+    # ready, a functional assertion fails, or everything succeeds.
     begin
+      # Wait for the server to be ready (retry up to 10 times). Polling
+      # uses a quiet `Kernel.system` call instead of `shell_output`:
+      # ferrite-cli exits non-zero on every attempt before the server has
+      # bound its port, and shell_output(cmd) asserts a zero exit status
+      # by default, so using it here would raise (and fail the test) on
+      # the very first retry instead of giving the server a chance to
+      # start.
+      #
+      # This must call `Kernel.system` explicitly rather than a bare
+      # `system(...)`: inside a Formula's `test do` block, `self` is the
+      # Formula instance, so an unqualified `system` call resolves to
+      # `Formula#system` (method lookup finds it before `Kernel#system`)
+      # - which does not accept `out:`/`err:` redirection keywords and,
+      # more importantly, raises `BuildError` on a non-zero exit instead
+      # of returning `false`. Either of those would break this retry
+      # loop outright: it would either fail with an argument/type error
+      # or raise (and fail the test) on the very first not-yet-ready
+      # attempt. `Kernel.system` is the real, non-raising boolean
+      # `system(2)` wrapper with proper redirection support.
+      ready = false
+      10.times do
+        ready = Kernel.system((bin/"ferrite-cli").to_s, "-p", port.to_s, "PING", out: File::NULL, err: File::NULL)
+        break if ready
+
+        sleep 1
+      end
+      assert ready, "ferrite server did not become ready on port #{port} within 10 seconds"
+
       # Test ping command
       output = shell_output("#{bin}/ferrite-cli -p #{port} PING")
       assert_match "PONG", output
@@ -152,8 +191,13 @@ class Ferrite < Formula
       output = shell_output("#{bin}/ferrite-cli -p #{port} DBSIZE")
       assert_match "1", output
     ensure
-      Process.kill("TERM", server_pid)
-      Process.wait(server_pid)
+      begin
+        Process.kill("TERM", server_pid)
+      rescue Errno::ESRCH
+        # The child already exited; it still needs to be reaped below.
+      ensure
+        Process.wait(server_pid)
+      end
     end
   end
 end

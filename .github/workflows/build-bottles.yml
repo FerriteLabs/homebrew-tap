@@ -4,27 +4,219 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Ferrite version (e.g., 0.1.0)'
+        description: "Ferrite version (next planned release: 0.5.0)"
         required: true
         type: string
   repository_dispatch:
     types: [new-release]
 
 jobs:
+  validate:
+    name: Validate release version and formula/metadata integrity
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      release_tag: ${{ steps.release.outputs.release_tag }}
+      bottle_branch: ${{ steps.release.outputs.bottle_branch }}
+      bottle_release_url: ${{ steps.release.outputs.bottle_release_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Untrusted event data is passed through env: and never
+      # interpolated with the double-brace expression syntax directly
+      # into a run: shell body, matching the hardening applied to
+      # update-formula.yml.
+      - name: Resolve and validate stable release version
+        id: release
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_VERSION: ${{ github.event.client_payload.version }}
+          WORKFLOW_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" = "repository_dispatch" ]; then
+            VERSION="${DISPATCH_VERSION}"
+          else
+            VERSION="${WORKFLOW_VERSION}"
+          fi
+
+          if [ -z "${VERSION}" ]; then
+            echo "::error::No version supplied by the triggering event"
+            exit 1
+          fi
+
+          # Validate before exposing the value to any URL, branch, tag,
+          # artifact name, download, or build step.
+          if ! VERSION="$(ruby scripts/release_version.rb "${VERSION}")"; then
+            exit 1
+          fi
+
+          {
+            echo "version=${VERSION}"
+            echo "release_tag=v${VERSION}"
+            echo "bottle_branch=update-ferrite-bottles-${VERSION}"
+            echo "archive_url=https://github.com/ferritelabs/ferrite/archive/refs/tags/v${VERSION}.tar.gz"
+            echo "bottle_release_url=https://github.com/ferritelabs/homebrew-tap/releases/download/v${VERSION}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Require the upstream release tag
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if ! git ls-remote --exit-code --tags \
+            https://github.com/ferritelabs/ferrite.git \
+            "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            echo "::error::Upstream tag ${RELEASE_TAG} does not exist. Bottles require a published core tag and a merged formula update."
+            exit 1
+          fi
+          echo "Verified upstream tag ${RELEASE_TAG}"
+
+      # Bottles must never be built for a formula that has not actually
+      # been updated to the requested release yet: ferrite.rb's url
+      # version, its sha256, and release-metadata.json's version/sha256/
+      # url must all agree with each other and with the version
+      # requested for this run. Any disagreement fails the whole
+      # workflow closed before a single bottle is built.
+      - name: Validate formula and release metadata agree with the requested version
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          ruby - <<'RUBY'
+            require "json"
+            require_relative "scripts/release_version"
+
+            version = ENV.fetch("VERSION")
+            formula = File.read("ferrite.rb")
+
+            url_match = formula.match(/^\s*url\s+"([^"]+)"/)
+            abort "::error::could not find a top-level url stanza in ferrite.rb" unless url_match
+            formula_url = url_match[1]
+
+            formula_version_match = formula_url.match(
+              %r{\Ahttps://github\.com/ferritelabs/ferrite/archive/refs/tags/v(.+)\.tar\.gz\z},
+            )
+            unless formula_version_match
+              abort "::error::ferrite.rb url is not the canonical Ferrite version-tag archive: #{formula_url}"
+            end
+            formula_version = formula_version_match[1]
+            begin
+              FerriteTap::ReleaseVersion.validate!(formula_version)
+            rescue ArgumentError => e
+              abort "::error::ferrite.rb url version is invalid: #{e.message}"
+            end
+
+            sha_match = formula.match(/^\s*sha256\s+"([0-9a-f]{64})"/)
+            abort "::error::could not find a well-formed source sha256 stanza in ferrite.rb" unless sha_match
+            formula_sha256 = sha_match[1]
+
+            if formula.match?(/^  bottle do$/)
+              abort "::error::ferrite.rb still contains bottle metadata from a prior release; " \
+                    "run and merge update-formula.yml before starting any bottle builds"
+            end
+
+            unless formula_version == version
+              abort "::error::requested version (#{version}) does not match ferrite.rb's url version " \
+                    "(#{formula_version}). Refusing to build bottles for a formula that has not been " \
+                    "updated to this release yet - run update-formula.yml first."
+            end
+
+            metadata_path = "release-metadata.json"
+            abort "::error::#{metadata_path} does not exist" unless File.exist?(metadata_path)
+            metadata = JSON.parse(File.read(metadata_path))
+
+            %w[version sha256 url].each do |key|
+              abort "::error::#{metadata_path} is missing required key \"#{key}\"" unless metadata.key?(key)
+            end
+
+            begin
+              FerriteTap::ReleaseVersion.validate!(metadata["version"])
+            rescue ArgumentError => e
+              abort "::error::#{metadata_path} version is invalid: #{e.message}"
+            end
+
+            unless metadata["version"] == version
+              abort "::error::requested version (#{version}) does not match #{metadata_path} version " \
+                    "(#{metadata["version"]})"
+            end
+
+            unless metadata["sha256"] == formula_sha256
+              abort "::error::#{metadata_path} sha256 (#{metadata["sha256"]}) does not match ferrite.rb " \
+                    "sha256 (#{formula_sha256})"
+            end
+
+            unless metadata["url"] == formula_url
+              abort "::error::#{metadata_path} url (#{metadata["url"]}) does not match ferrite.rb url " \
+                    "(#{formula_url})"
+            end
+
+            puts "OK: version #{version}, ferrite.rb, and #{metadata_path} all agree " \
+                 "(url=#{formula_url}, sha256=#{formula_sha256})"
+          RUBY
+
+      # The canonical checksum is always recomputed from the real tagged
+      # archive and compared against what ferrite.rb already has
+      # committed - never trusted from the formula/metadata files alone.
+      # A mismatch here means the tarball changed (or was tampered with)
+      # since the formula was last updated, so bottles must not be built.
+      - name: Recompute canonical archive checksum and compare
+        env:
+          ARCHIVE_URL: ${{ steps.release.outputs.archive_url }}
+        run: |
+          set -euo pipefail
+          FORMULA_SHA256="$(ruby -e 'print File.read("ferrite.rb")[/^\s*sha256\s+"([0-9a-f]{64})"/, 1]')"
+          if [ -z "${FORMULA_SHA256}" ]; then
+            echo "::error::could not extract a well-formed sha256 from ferrite.rb"
+            exit 1
+          fi
+
+          echo "Downloading canonical tagged archive: ${ARCHIVE_URL}"
+
+          COMPUTED_SHA256="$(curl -sSL --fail "${ARCHIVE_URL}" | sha256sum | awk "{print \$1}")"
+          if [ -z "${COMPUTED_SHA256}" ]; then
+            echo "::error::Failed to download or hash ${ARCHIVE_URL}"
+            exit 1
+          fi
+
+          if [ "${COMPUTED_SHA256}" != "${FORMULA_SHA256}" ]; then
+            echo "::error::Recomputed checksum (${COMPUTED_SHA256}) for ${ARCHIVE_URL} does not match ferrite.rb's committed sha256 (${FORMULA_SHA256}). Refusing to build bottles against a formula whose checksum no longer matches the real tagged archive."
+            exit 1
+          fi
+
+          echo "Verified: recomputed checksum matches ferrite.rb sha256 (${COMPUTED_SHA256})"
+
   bottle:
+    name: Build bottle (${{ matrix.expected_tag }})
+    needs: validate
     strategy:
+      fail-fast: false
       matrix:
+        # Every entry here must produce a genuinely distinct, currently
+        # supported Homebrew bottle platform tag. `brew bottle` derives
+        # the tag automatically from the OS/arch the job actually runs
+        # on (matrix labels below do not select it), so `expected_tag`
+        # is independently verified against the JSON `brew bottle`
+        # produces in the "Validate generated bottle JSON" step - if
+        # GitHub repoints a runner label at a different OS release, that
+        # step fails loudly instead of silently shipping a mislabeled or
+        # duplicate bottle.
+        #
+        # macos-13 (Ventura) is fully retired by GitHub as of Dec 2025
+        # and is dropped entirely rather than kept as a fake target.
+        # macos-14 is in its deprecation window but kept as the arm64
+        # "legacy" (Sonoma) target since many users have not yet
+        # upgraded; its Intel counterpart (macos-14-large) is dropped
+        # rather than doubling down on a deprecated OS on both arches.
         include:
+          - os: macos-15
+            expected_tag: arm64_sequoia
+          - os: macos-15-intel
+            expected_tag: sequoia
           - os: macos-14
-            arch: arm64_sonoma
-          - os: macos-14
-            arch: arm64_ventura
-          - os: macos-13
-            arch: sonoma
-          - os: macos-13
-            arch: ventura
+            expected_tag: arm64_sonoma
           - os: ubuntu-latest
-            arch: x86_64_linux
+            expected_tag: x86_64_linux
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -37,26 +229,88 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build bottle
-        run: |
-          brew install --build-bottle ./ferrite.rb
-          brew bottle --json --root-url="https://github.com/ferritelabs/homebrew-tap/releases/download/v${{ inputs.version || github.event.client_payload.version }}" ./ferrite.rb
+      # Every Homebrew invocation below is tap-qualified
+      # (ferritelabs/ci/ferrite), never a bare path (./ferrite.rb).
+      # Path-based `brew install`/`brew bottle` builds a formula with no
+      # stable tap identity, which is what makes the bottle JSON's
+      # embedded `formula.path` a raw, runner-specific filesystem path
+      # in the first place (see the collect job's normalization step).
+      # Tapping under the same deterministic name on every runner keeps
+      # that embedded path shaped as a Homebrew-relative tap path
+      # instead, and matches the tap-qualified `brew audit`/`brew style`
+      # already required elsewhere in this workflow and in ci.yml.
+      - name: Tap the checkout under a deterministic name
+        run: brew tap ferritelabs/ci "$(pwd)"
 
-      - name: Upload bottle
+      - name: Build bottle
+        env:
+          BOTTLE_RELEASE_URL: ${{ needs.validate.outputs.bottle_release_url }}
+        run: |
+          set -euo pipefail
+          brew install --build-bottle ferritelabs/ci/ferrite
+          brew bottle --json --root-url="${BOTTLE_RELEASE_URL}" ferritelabs/ci/ferrite
+
+      - name: Validate generated bottle JSON tag and filename
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          EXPECTED_TAG: ${{ matrix.expected_tag }}
+        run: |
+          set -euo pipefail
+          JSON_FILE="$(find . -maxdepth 1 -name 'ferrite--*.bottle.json' | head -n1)"
+          if [ -z "${JSON_FILE}" ]; then
+            echo "::error::brew bottle --json did not produce a ferrite--*.bottle.json file"
+            exit 1
+          fi
+
+          ACTUAL_TAG="$(ruby -rjson -e '
+            data = JSON.parse(File.read(ARGV[0]))
+            puts data.values.first.fetch("bottle").fetch("tags").keys.first
+          ' "${JSON_FILE}")"
+
+          if [ "${ACTUAL_TAG}" != "${EXPECTED_TAG}" ]; then
+            echo "::error::Runner '${{ matrix.os }}' produced bottle tag '${ACTUAL_TAG}' but the matrix expected '${EXPECTED_TAG}'. GitHub may have changed which OS/arch this runner label points to; update the matrix's expected_tag (or os) to match reality rather than shipping a mislabeled bottle."
+            exit 1
+          fi
+
+          EXPECTED_TARBALL="ferrite--${VERSION}.${EXPECTED_TAG}.bottle.tar.gz"
+          if [ ! -f "${EXPECTED_TARBALL}" ]; then
+            echo "::error::Expected bottle tarball ${EXPECTED_TARBALL} was not produced (found: $(find . -maxdepth 1 -name 'ferrite--*.bottle.tar.gz' | tr '\n' ' '))"
+            exit 1
+          fi
+
+          echo "Verified bottle tag '${ACTUAL_TAG}' and filename '${EXPECTED_TARBALL}' for ${{ matrix.os }}"
+
+      - name: Reinstall and test generated bottle
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          EXPECTED_TAG: ${{ matrix.expected_tag }}
+        run: |
+          set -euo pipefail
+          BOTTLE_TARBALL="ferrite--${VERSION}.${EXPECTED_TAG}.bottle.tar.gz"
+          brew uninstall --force ferritelabs/ci/ferrite
+          brew install --force-bottle "./${BOTTLE_TARBALL}"
+          brew test ferritelabs/ci/ferrite
+
+      - name: Upload bottle artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: bottle-${{ matrix.arch }}
+          name: bottle-${{ matrix.expected_tag }}
           path: |
             ferrite--*.bottle.tar.gz
             ferrite--*.bottle.json
 
   collect:
-    needs: bottle
+    name: Merge bottles and open pull request
+    needs: [validate, bottle]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
 
     steps:
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@v1
+
       - name: Checkout tap
         uses: actions/checkout@v4
 
@@ -65,80 +319,172 @@ jobs:
         with:
           merge-multiple: true
 
-      - name: Merge bottle JSON and update formula
+      - name: Validate expected bottle artifacts were produced
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          BOTTLE_RELEASE_URL: ${{ needs.validate.outputs.bottle_release_url }}
         run: |
-          # Merge all bottle JSON files
-          python3 -c "
-          import json, glob
-          bottles = {}
-          for f in glob.glob('ferrite--*.bottle.json'):
-              with open(f) as fh:
-                  data = json.load(fh)
-                  for formula, info in data.items():
-                      if formula not in bottles:
-                          bottles[formula] = info
-                      else:
-                          bottles[formula]['bottle']['tags'].update(info['bottle']['tags'])
-          print(json.dumps(bottles, indent=2))
-          " > merged-bottles.json
-          echo "Merged bottle JSON:"
-          cat merged-bottles.json
+          set -euo pipefail
+          EXPECTED_TAGS="arm64_sequoia sequoia arm64_sonoma x86_64_linux"
+          EXPECTED_COUNT=4
 
-      - name: Update formula with bottle checksums
-        run: |
-          python3 << 'PYEOF'
-          import json, re
-
-          with open("merged-bottles.json") as f:
-              data = json.load(f)
-
-          # Extract bottle tags (platform -> sha256)
-          checksums = {}
-          for formula, info in data.items():
-              for tag, tag_info in info.get("bottle", {}).get("tags", {}).items():
-                  checksums[tag] = tag_info.get("sha256", "")
-
-          # Map platform names to formula identifiers
-          platform_map = {
-              "arm64_sonoma": "arm64_sonoma",
-              "arm64_ventura": "arm64_ventura",
-              "arm64_sequoia": "arm64_sequoia",
-              "sonoma": "sonoma",
-              "ventura": "ventura",
-              "x86_64_linux": "x86_64_linux",
-          }
-
-          with open("ferrite.rb") as f:
-              formula = f.read()
-
-          for platform, identifier in platform_map.items():
-              if platform in checksums and checksums[platform]:
-                  pattern = rf'(sha256 cellar: :any_skip_relocation, {re.escape(identifier)}:\s+)"[a-f0-9]+"'
-                  replacement = rf'\1"{checksums[platform]}"'
-                  formula = re.sub(pattern, replacement, formula)
-
-          with open("ferrite.rb", "w") as f:
-              f.write(formula)
-
-          print(f"Updated {len(checksums)} bottle checksums in ferrite.rb")
-          PYEOF
-
-      - name: Commit formula update
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add ferrite.rb
-          if git diff --cached --quiet; then
-            echo "No bottle checksum changes to commit"
-          else
-            git commit -m "chore: update bottle checksums for v${{ inputs.version || github.event.client_payload.version }}"
-            git push
+          ACTUAL_JSON_COUNT="$(find . -maxdepth 1 -name "ferrite--*.bottle.json" | wc -l | tr -d "[:space:]")"
+          ACTUAL_TARBALL_COUNT="$(find . -maxdepth 1 -name "ferrite--*.bottle.tar.gz" | wc -l | tr -d "[:space:]")"
+          if [ "${ACTUAL_JSON_COUNT}" -ne "${EXPECTED_COUNT}" ] || [ "${ACTUAL_TARBALL_COUNT}" -ne "${EXPECTED_COUNT}" ]; then
+            echo "::error::Expected ${EXPECTED_COUNT} bottle JSON artifacts and ${EXPECTED_COUNT} tarballs, but found ${ACTUAL_JSON_COUNT} JSON files and ${ACTUAL_TARBALL_COUNT} tarballs. Refusing to merge a partial or contaminated bottle set."
+            exit 1
           fi
+
+          for tag in ${EXPECTED_TAGS}; do
+            EXPECTED_JSON="ferrite--${VERSION}.${tag}.bottle.json"
+            EXPECTED_TARBALL="ferrite--${VERSION}.${tag}.bottle.tar.gz"
+            if [ ! -f "${EXPECTED_JSON}" ]; then
+              echo "::error::Missing expected bottle JSON for platform '${tag}': ${EXPECTED_JSON}"
+              exit 1
+            fi
+            if [ ! -f "${EXPECTED_TARBALL}" ]; then
+              echo "::error::Missing expected bottle tarball for platform '${tag}': ${EXPECTED_TARBALL}"
+              exit 1
+            fi
+
+            ruby scripts/validate_bottle_artifact.rb \
+              "${EXPECTED_JSON}" \
+              "${EXPECTED_TARBALL}" \
+              "${VERSION}" \
+              "${tag}" \
+              "${BOTTLE_RELEASE_URL}"
+          done
+
+          echo "Validated the complete ${ACTUAL_JSON_COUNT}-platform bottle set for: ${EXPECTED_TAGS}"
+
+      # The version-update PR must have removed the prior release's bottle
+      # block. After the exact expected artifact set is validated above,
+      # canonical Homebrew merge writes a complete new block using only
+      # this run's JSON. Old root URLs, checksums, and rebuild metadata
+      # belong to a different source version and must never be preserved.
+      - name: Merge bottle metadata into the formula
+        env:
+          BOTTLE_RELEASE_URL: ${{ needs.validate.outputs.bottle_release_url }}
+        run: |
+          set -euo pipefail
+          if grep -q "^[[:space:]]*bottle do" ferrite.rb; then
+            echo "::error::ferrite.rb still contains bottle metadata from a prior release; run and merge update-formula.yml first"
+            exit 1
+          fi
+
+          # Create this collect runner's own deterministic local tap so
+          # `brew bottle --merge` has a stable, tap-qualified formula to
+          # target.
+          brew tap ferritelabs/ci "$(pwd)"
+          TAPPED_FORMULA="$(brew formula ferritelabs/ci/ferrite)"
+
+          # Each per-platform bottle JSON embeds a `formula.path` that
+          # was captured on whichever bottle-job runner built that
+          # platform (a different OS, HOMEBREW_REPOSITORY, and tap
+          # clone than this collect runner). `brew bottle --merge`
+          # resolves that field as HOMEBREW_REPOSITORY joined with the
+          # JSON's `formula.path`, so left as-is it only targets the
+          # right file by coincidence. Normalize every downloaded
+          # bottle JSON's `formula.path` to this collect runner's own
+          # TAPPED_FORMULA - expressed the same relative-to-
+          # HOMEBREW_REPOSITORY way Homebrew itself generates it -
+          # before merging, so the merge deterministically writes into
+          # this runner's tapped formula clone regardless of which
+          # platform's JSON is processed.
+          HOMEBREW_REPOSITORY_PATH="$(brew --repository)"
+          ruby -rjson -rpathname -e '
+            homebrew_repository, tapped_formula = ARGV
+            relative_path = Pathname.new(tapped_formula).to_s.delete_prefix("#{homebrew_repository}/")
+
+            json_files = Dir["ferrite--*.bottle.json"]
+            json_files.each do |path|
+              data = JSON.parse(File.read(path))
+              data.each_value { |formula_hash| formula_hash.fetch("formula")["path"] = relative_path }
+              File.write(path, JSON.pretty_generate(data))
+            end
+
+            puts "Normalized formula.path to #{relative_path.inspect} in #{json_files.length} bottle JSON file(s)"
+          ' "${HOMEBREW_REPOSITORY_PATH}" "${TAPPED_FORMULA}"
+
+          brew bottle --merge --write --no-commit ferrite--*.bottle.json
+
+          # `brew bottle --merge --write` resolves the (now-normalized)
+          # `formula.path` against HOMEBREW_REPOSITORY and writes the
+          # new bottle block there - i.e. into TAPPED_FORMULA, not this
+          # checkout's ferrite.rb directly. Confirm that actually
+          # happened before trusting it, then copy the merged tapped
+          # formula back into the workspace checkout for verification
+          # and the pull request. Copying in the opposite direction
+          # (workspace -> tapped) would silently discard whatever
+          # `brew bottle --merge` wrote and ship a formula with no
+          # bottle metadata at all.
+          if ! grep -q "^[[:space:]]*bottle do" "${TAPPED_FORMULA}"; then
+            echo "::error::brew bottle --merge did not write a bottle block into the tapped formula (${TAPPED_FORMULA}); refusing to copy stale or unmerged metadata into the checkout"
+            exit 1
+          fi
+          cp "${TAPPED_FORMULA}" ferrite.rb
+          echo "Merged bottle metadata:"
+          sed -n "/bottle do/,/^  end/p" ferrite.rb
+
+          ruby -rjson -e '
+            expected_root_url = ENV.fetch("BOTTLE_RELEASE_URL")
+            expected = Dir["ferrite--*.bottle.json"].sort.each_with_object({}) do |path, checksums|
+              formula = JSON.parse(File.read(path)).values.first
+              bottle = formula.fetch("bottle")
+              abort "::error::#{path} has an unexpected root_url" unless bottle["root_url"] == expected_root_url
+              tag, data = bottle.fetch("tags").first
+              checksums[tag] = data.fetch("sha256")
+            end
+
+            source = File.read("ferrite.rb")
+            blocks = source.scan(/^  bottle do\n.*?^  end\n/m)
+            abort "::error::ferrite.rb must contain exactly one merged bottle block" unless blocks.length == 1
+            block = blocks.first
+            abort "::error::merged bottle block has an unexpected root_url" \
+              unless block.include?(%(root_url "#{expected_root_url}"))
+            abort "::error::merged bottle block unexpectedly contains rebuild metadata" \
+              if block.match?(/^\s*rebuild\s+/)
+
+            actual = block.scan(
+              /^\s*sha256(?:\s+cellar:\s*[^,]+,)?\s+([a-z0-9_]+):\s*"([0-9a-f]{64})"\s*$/,
+            ).to_h
+            abort "::error::merged bottle checksums do not exactly match the validated JSON set" \
+              unless actual == expected
+
+            puts "Verified complete merged bottle block for #{expected.keys.sort.join(", ")}"
+          '
+
+      - name: Run formula syntax check and fast test suite
+        run: |
+          set -euo pipefail
+          ruby -c ferrite.rb
+          bash tests/run.sh --fast
+
+      - name: Run Homebrew audit and style on the updated formula
+        run: |
+          set -euo pipefail
+          brew audit --strict --online ferritelabs/ci/ferrite
+          brew style ferritelabs/ci/ferrite
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "chore: add bottle checksums for ${{ needs.validate.outputs.release_tag }}"
+          title: "chore: add bottle checksums for ${{ needs.validate.outputs.release_tag }}"
+          body: |
+            Automated bottle metadata update for Ferrite ${{ needs.validate.outputs.release_tag }}.
+
+            Generated by `brew bottle --merge` from the per-platform bottle
+            manifests built in this workflow run. No direct push to main is
+            made; this pull request goes through normal CI and review like
+            any other formula change.
+          branch: ${{ needs.validate.outputs.bottle_branch }}
+          base: main
 
       - name: Create release with bottles
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ inputs.version || github.event.client_payload.version }}
+          tag_name: ${{ needs.validate.outputs.release_tag }}
           files: ferrite--*.bottle.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
